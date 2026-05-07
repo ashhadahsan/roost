@@ -126,6 +126,7 @@ class AsyncRoost:
         tags: list[str] | None = None,
         timeout_seconds: int | None = None,
         depends_on: list[int] | None = None,
+        metadata: dict[str, Any] | None = None,
         conn: asyncpg.Connection | None = None,
     ) -> int:
         """Insert a job. Pass ``conn=`` to enqueue inside the caller's txn.
@@ -133,7 +134,8 @@ class AsyncRoost:
         ``task`` may be a registered task name or a function decorated with
         ``@job(...)``. ``args`` accepts a dict or a Pydantic model — models
         are dumped via ``model_dump()`` so types like ``UUID`` and ``datetime``
-        round-trip cleanly.
+        round-trip cleanly. ``metadata`` is an out-of-band JSONB column for
+        trace ids / request ids / tenant ids that aren't handler input.
         """
         name = task_name(task) if callable(task) else task
         args_dict = observability.inject_trace_context(_coerce_args(args))
@@ -163,6 +165,7 @@ class AsyncRoost:
             tags=tags,
             timeout_seconds=timeout_seconds,
             depends_on=depends_on,
+            metadata=metadata,
         )
         observability.JOBS_ENQUEUED.labels(queue=queue, task=name).inc()
 
@@ -272,6 +275,11 @@ class AsyncRoost:
         orphan_stale_after: float = 5 * 60.0,
         shutdown_timeout: float = 30.0,
         listen_reconnect_delay: float = 1.0,
+        error_cap: int = 20,
+        archive_after_seconds: float | None = None,
+        archive_interval: float = 60.0,
+        startup_max_retries: int = 30,
+        startup_retry_delay: float = 1.0,
     ) -> Worker:
         """Construct a :class:`Worker` bound to this Roost's DSN."""
         return Worker(
@@ -288,6 +296,11 @@ class AsyncRoost:
             orphan_stale_after=orphan_stale_after,
             shutdown_timeout=shutdown_timeout,
             listen_reconnect_delay=listen_reconnect_delay,
+            error_cap=error_cap,
+            archive_after_seconds=archive_after_seconds,
+            archive_interval=archive_interval,
+            startup_max_retries=startup_max_retries,
+            startup_retry_delay=startup_retry_delay,
         )
 
     async def __aenter__(self) -> AsyncRoost:

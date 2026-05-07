@@ -35,9 +35,10 @@ async def test_apply_pending_records_each_migration(async_conn: asyncpg.Connecti
 
 @pytest.mark.asyncio
 async def test_rollback_runs_down_in_reverse(async_conn: asyncpg.Connection) -> None:
-    # Roll back the last migration (chaining). The depends_on column should disappear.
+    # Roll back to v1 — every migration above should have its down() applied,
+    # including the chaining migration that adds depends_on.
     reverted = await rollback_to_async(async_conn, target=1)
-    assert reverted == [2]
+    assert 2 in reverted  # chaining migration was reverted
     cols = [
         r["column_name"]
         for r in await async_conn.fetch(
@@ -47,9 +48,11 @@ async def test_rollback_runs_down_in_reverse(async_conn: asyncpg.Connection) -> 
     ]
     assert "depends_on" not in cols
 
-    # And re-apply gets us back.
+    # And re-apply gets us back to latest.
     applied = await apply_pending_async(async_conn)
-    assert applied == [2]
+    assert 2 in applied
+    versions = await applied_versions_async(async_conn)
+    assert versions == sorted(m.version for m in MIGRATIONS)
 
 
 @pytest.mark.asyncio
@@ -64,7 +67,7 @@ async def test_rollback_refuses_irreversible(async_conn: asyncpg.Connection) -> 
 
 def test_applied_versions_sync(fresh_dsn: str) -> None:
     with psycopg.connect(fresh_dsn) as conn:
-        assert applied_versions_sync(conn) == [1, 2]
+        assert applied_versions_sync(conn) == sorted(m.version for m in MIGRATIONS)
 
 
 # ---------------------------------------------------------------------------

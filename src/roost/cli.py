@@ -296,14 +296,86 @@ def requeue(
         bool,
         typer.Option("--discarded", help="Mass-revive every discarded job to available."),
     ] = False,
+    queue: Annotated[
+        str | None,
+        typer.Option("--queue", help="Limit the bulk action to this queue."),
+    ] = None,
     dsn: Annotated[str | None, typer.Option(help="Postgres DSN (or set ROOST_DSN).")] = None,
 ) -> None:
     """Requeue discarded jobs in bulk. Use ``roost retry <id>`` for a single id."""
+    import psycopg
+
     if not discarded:
         raise typer.BadParameter("pass --discarded to mass-requeue the dead-letter pile")
     target = _resolve_dsn(dsn)
-    n = Roost(target).requeue_discarded()
-    typer.secho(f"requeued {n} discarded job(s)", fg=typer.colors.GREEN)
+    if queue is None:
+        n = Roost(target).requeue_discarded()
+    else:
+        with psycopg.connect(target) as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE roost.jobs SET state = 'available', scheduled_at = now(), "
+                "    attempt = 0, cancel_requested = false "
+                " WHERE state = 'discarded' AND queue = %s",
+                (queue,),
+            )
+            n = cur.rowcount or 0
+            conn.commit()
+    typer.secho(
+        f"requeued {n} discarded job(s)" + (f" from queue {queue!r}" if queue else ""),
+        fg=typer.colors.GREEN,
+    )
+
+
+@app.command()
+def enqueue(
+    task: str = typer.Argument(..., help="Registered task name."),
+    args_json: Annotated[
+        str,
+        typer.Option("--args", help="JSON-encoded args dict. Example: --args '{\"x\": 1}'."),
+    ] = "{}",
+    queue_name: Annotated[str, typer.Option("--queue", help="Queue to enqueue into.")] = "default",
+    in_seconds: Annotated[
+        float | None,
+        typer.Option(
+            "--in",
+            help="Seconds from now until the job becomes available. Negative => snooze.",
+        ),
+    ] = None,
+    priority: Annotated[int, typer.Option(help="Job priority (lower runs first).")] = 0,
+    max_attempts: Annotated[int, typer.Option(help="Maximum retry attempts.")] = 20,
+    unique_key: Annotated[
+        str | None, typer.Option(help="Dedup key. Active rows with same key are deduplicated.")
+    ] = None,
+    dsn: Annotated[str | None, typer.Option(help="Postgres DSN (or set ROOST_DSN).")] = None,
+) -> None:
+    """Ad-hoc enqueue from the command line — handy for ops + debugging."""
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    target = _resolve_dsn(dsn)
+    try:
+        parsed = json.loads(args_json)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(f"--args is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise typer.BadParameter("--args must encode a JSON object")
+    when: datetime | None = None
+    if in_seconds is not None:
+        when = datetime.now(tz=timezone.utc) + timedelta(seconds=in_seconds)
+
+    job_id = Roost(target).enqueue(
+        task,
+        args=parsed,
+        queue=queue_name,
+        priority=priority,
+        max_attempts=max_attempts,
+        scheduled_at=when,
+        unique_key=unique_key,
+    )
+    typer.secho(
+        f"enqueued job {job_id} task={task!r} queue={queue_name!r}",
+        fg=typer.colors.GREEN,
+    )
 
 
 # Make ``AsyncRoost`` reachable for ``importlib`` users; suppresses unused-import warnings.

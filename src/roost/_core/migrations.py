@@ -179,9 +179,32 @@ ALTER TABLE roost.jobs DROP COLUMN IF EXISTS depends_on;
 """
 
 
+_V3_UP = """
+ALTER TABLE roost.jobs
+    ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+CREATE TABLE IF NOT EXISTS roost.jobs_archive (
+    LIKE roost.jobs INCLUDING DEFAULTS INCLUDING IDENTITY,
+    archived_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS jobs_archive_archived_at_idx
+    ON roost.jobs_archive (archived_at);
+
+CREATE INDEX IF NOT EXISTS jobs_archive_id_idx
+    ON roost.jobs_archive (id);
+"""
+
+_V3_DOWN = """
+DROP TABLE IF EXISTS roost.jobs_archive;
+ALTER TABLE roost.jobs DROP COLUMN IF EXISTS metadata;
+"""
+
+
 MIGRATIONS: list[Migration] = [
     Migration(version=1, name="initial", up=_V1_UP, down=_V1_DOWN),
     Migration(version=2, name="job_dependencies", up=_V2_UP, down=_V2_DOWN),
+    Migration(version=3, name="metadata_and_archive", up=_V3_UP, down=_V3_DOWN),
 ]
 
 

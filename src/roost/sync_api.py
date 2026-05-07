@@ -84,6 +84,7 @@ class Roost:
         tags: list[str] | None = None,
         timeout_seconds: int | None = None,
         depends_on: list[int] | None = None,
+        metadata: dict[str, Any] | None = None,
         conn: psycopg.Connection[Any] | None = None,
     ) -> int:
         name = task_name(task) if callable(task) else task
@@ -115,6 +116,7 @@ class Roost:
             tags=tags,
             timeout_seconds=timeout_seconds,
             depends_on=depends_on,
+            metadata=metadata,
         )
 
         if conn is not None:

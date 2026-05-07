@@ -36,3 +36,4 @@ class Job(BaseModel):
     cancel_requested: bool = False
     result: Any | None = None
     depends_on: list[int] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)

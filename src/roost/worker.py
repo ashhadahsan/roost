@@ -67,6 +67,11 @@ class Worker:
         orphan_stale_after: float = 5 * 60.0,
         shutdown_timeout: float = 30.0,
         listen_reconnect_delay: float = 1.0,
+        error_cap: int = 20,
+        archive_after_seconds: float | None = None,
+        archive_interval: float = 60.0,
+        startup_max_retries: int = 30,
+        startup_retry_delay: float = 1.0,
     ) -> None:
         self.dsn = dsn
         self.queues = list(queues)
@@ -85,6 +90,11 @@ class Worker:
         self.orphan_stale_after = orphan_stale_after
         self.shutdown_timeout = shutdown_timeout
         self.listen_reconnect_delay = listen_reconnect_delay
+        self.error_cap = max(1, int(error_cap))
+        self.archive_after_seconds = archive_after_seconds
+        self.archive_interval = archive_interval
+        self.startup_max_retries = max(1, int(startup_max_retries))
+        self.startup_retry_delay = startup_retry_delay
 
         self.id = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         self._stop = asyncio.Event()
@@ -98,14 +108,7 @@ class Worker:
     # ------------------------------------------------------------------
 
     async def run(self) -> None:
-        import asyncpg
-
-        pool = await asyncpg.create_pool(
-            self.dsn,
-            min_size=1,
-            max_size=self.concurrency + 4,
-            init=repo.init_connection,
-        )
+        pool = await self._open_pool_with_retry()
 
         background: list[asyncio.Task[None]] = []
         try:
@@ -113,6 +116,8 @@ class Worker:
             background.append(asyncio.create_task(self._cancel_listen_loop(), name="roost-cancel"))
             background.append(asyncio.create_task(self._heartbeat_loop(pool), name="roost-heartbeat"))
             background.append(asyncio.create_task(self._reaper_loop(pool), name="roost-reaper"))
+            if self.archive_after_seconds is not None:
+                background.append(asyncio.create_task(self._archive_loop(pool), name="roost-archive"))
             if self.run_cron:
                 background.append(
                     asyncio.create_task(
@@ -312,7 +317,7 @@ class Worker:
                         _log.info("job.cancelled", id=job.id, task=job.task)
                         return
                 if next_attempt >= job.max_attempts:
-                    await repo.mark_discarded_async(conn, job.id, error_payload)
+                    await repo.mark_discarded_async(conn, job.id, error_payload, error_cap=self.error_cap)
                     observability.JOBS_FAILED.labels(
                         queue=job.queue, task=job.task, outcome="discarded"
                     ).inc()
@@ -326,7 +331,9 @@ class Worker:
                 else:
                     delay = float(self.retry_strategy(next_attempt))
                     when = datetime.now(tz=timezone.utc) + timedelta(seconds=delay)
-                    await repo.mark_retryable_async(conn, job.id, when, error_payload)
+                    await repo.mark_retryable_async(
+                        conn, job.id, when, error_payload, error_cap=self.error_cap
+                    )
                     observability.JOBS_FAILED.labels(
                         queue=job.queue, task=job.task, outcome="retryable"
                     ).inc()
@@ -442,6 +449,57 @@ class Worker:
             except Exception as exc:
                 _log.warning("worker.heartbeat_failed", error=str(exc))
             await self._sleep_or_wakeup(self.heartbeat_interval)
+
+    async def _open_pool_with_retry(self) -> asyncpg.Pool:
+        """Open the pool, retrying with backoff if Postgres isn't ready yet.
+
+        Critical in containerized deploys where the worker may boot before
+        the Postgres container's healthcheck flips green.
+        """
+        import asyncpg
+
+        delay = max(0.0, self.startup_retry_delay)
+        last_exc: BaseException | None = None
+        for attempt in range(1, self.startup_max_retries + 1):
+            try:
+                return await asyncpg.create_pool(
+                    self.dsn,
+                    min_size=1,
+                    max_size=self.concurrency + 4,
+                    init=repo.init_connection,
+                )
+            except Exception as exc:
+                last_exc = exc
+                _log.warning(
+                    "worker.startup_pool_failed",
+                    attempt=attempt,
+                    max_retries=self.startup_max_retries,
+                    error=str(exc),
+                )
+                if attempt == self.startup_max_retries:
+                    break
+                await asyncio.sleep(min(delay, 30.0))
+                delay = min(delay * 1.5 + 0.5, 30.0)
+        assert last_exc is not None
+        raise last_exc
+
+    async def _archive_loop(self, pool: asyncpg.Pool) -> None:
+        """Periodically move terminal jobs older than ``archive_after_seconds`` out of ``roost.jobs``."""
+        if self.archive_after_seconds is None:
+            return
+        while not self._stop.is_set():
+            try:
+                async with pool.acquire() as conn:
+                    moved = await repo.archive_terminal_async(
+                        conn, older_than_seconds=self.archive_after_seconds
+                    )
+                if moved:
+                    _log.info("worker.archived", count=moved)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                _log.warning("worker.archive_failed", error=str(exc))
+            await self._sleep_or_wakeup(self.archive_interval)
 
     async def _reaper_loop(self, pool: asyncpg.Pool) -> None:
         while not self._stop.is_set():

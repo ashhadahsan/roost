@@ -28,19 +28,20 @@ if TYPE_CHECKING:  # pragma: no cover
 # ---------------------------------------------------------------------------
 
 _ENQUEUE_BASE_COLS = (
-    "task, args, queue, priority, max_attempts, scheduled_at, unique_key, tags, timeout_seconds, depends_on"
+    "task, args, queue, priority, max_attempts, scheduled_at, "
+    "unique_key, tags, timeout_seconds, depends_on, metadata"
 )
 
 _INSERT_PLAIN_PG = f"""
 INSERT INTO roost.jobs ({_ENQUEUE_BASE_COLS})
-VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8::text[], $9, $10::bigint[])
+VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8::text[], $9, $10::bigint[], $11::jsonb)
 RETURNING id
 """
 
 _INSERT_UNIQUE_PG = f"""
 WITH attempted AS (
     INSERT INTO roost.jobs ({_ENQUEUE_BASE_COLS})
-    VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8::text[], $9, $10::bigint[])
+    VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8::text[], $9, $10::bigint[], $11::jsonb)
     ON CONFLICT (unique_key)
       WHERE unique_key IS NOT NULL AND state IN ('available','executing','retryable')
     DO NOTHING
@@ -58,14 +59,14 @@ SELECT j.id, false AS inserted
 
 _INSERT_PLAIN_PSY = f"""
 INSERT INTO roost.jobs ({_ENQUEUE_BASE_COLS})
-VALUES (%s, %s::jsonb, %s, %s, %s, %s, %s, %s::text[], %s, %s::bigint[])
+VALUES (%s, %s::jsonb, %s, %s, %s, %s, %s, %s::text[], %s, %s::bigint[], %s::jsonb)
 RETURNING id
 """
 
 _INSERT_UNIQUE_PSY = f"""
 WITH attempted AS (
     INSERT INTO roost.jobs ({_ENQUEUE_BASE_COLS})
-    VALUES (%s, %s::jsonb, %s, %s, %s, %s, %s, %s::text[], %s, %s::bigint[])
+    VALUES (%s, %s::jsonb, %s, %s, %s, %s, %s, %s::text[], %s, %s::bigint[], %s::jsonb)
     ON CONFLICT (unique_key)
       WHERE unique_key IS NOT NULL AND state IN ('available','executing','retryable')
     DO NOTHING
@@ -153,7 +154,17 @@ _MARK_RETRYABLE_PG = """
 UPDATE roost.jobs
    SET state = 'retryable',
        scheduled_at = $2,
-       errors = errors || $3::jsonb
+       errors = (
+           SELECT COALESCE(jsonb_agg(e ORDER BY ord), '[]'::jsonb) FROM (
+               SELECT e, ord FROM jsonb_array_elements(errors || $3::jsonb)
+                   WITH ORDINALITY AS t(e, ord)
+                ORDER BY ord
+               OFFSET GREATEST(
+                   0,
+                   jsonb_array_length(errors || $3::jsonb) - $4::int
+               )
+           ) trimmed(e, ord)
+       )
  WHERE id = $1
 """
 
@@ -161,7 +172,17 @@ _MARK_DISCARDED_PG = """
 UPDATE roost.jobs
    SET state = 'discarded',
        discarded_at = now(),
-       errors = errors || $2::jsonb
+       errors = (
+           SELECT COALESCE(jsonb_agg(e ORDER BY ord), '[]'::jsonb) FROM (
+               SELECT e, ord FROM jsonb_array_elements(errors || $2::jsonb)
+                   WITH ORDINALITY AS t(e, ord)
+                ORDER BY ord
+               OFFSET GREATEST(
+                   0,
+                   jsonb_array_length(errors || $2::jsonb) - $3::int
+               )
+           ) trimmed(e, ord)
+       )
  WHERE id = $1
 """
 
@@ -295,10 +316,32 @@ UPDATE roost.jobs
 
 _BULK_INSERT_PG = f"""
 INSERT INTO roost.jobs ({_ENQUEUE_BASE_COLS})
-VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8::text[], $9, $10::bigint[])
+VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8::text[], $9, $10::bigint[], $11::jsonb)
 ON CONFLICT (unique_key)
   WHERE unique_key IS NOT NULL AND state IN ('available','executing','retryable')
 DO NOTHING
+"""
+
+_ARCHIVE_TERMINAL_PG = """
+WITH moved AS (
+    DELETE FROM roost.jobs
+     WHERE state IN ('completed', 'discarded', 'cancelled')
+       AND COALESCE(completed_at, discarded_at, cancelled_at) < now() - ($1::interval)
+    RETURNING *
+)
+INSERT INTO roost.jobs_archive (
+    id, queue, task, args, state, priority, attempt, max_attempts,
+    scheduled_at, attempted_at, completed_at, cancelled_at, discarded_at,
+    errors, unique_key, inserted_at, tags, timeout_seconds, cancel_requested,
+    result, depends_on, metadata
+)
+SELECT
+    id, queue, task, args, state, priority, attempt, max_attempts,
+    scheduled_at, attempted_at, completed_at, cancelled_at, discarded_at,
+    errors, unique_key, inserted_at, tags, timeout_seconds, cancel_requested,
+    result, depends_on, metadata
+  FROM moved
+RETURNING id
 """
 
 _CANCEL_BLOCKED_DEPENDENTS_PG = """
@@ -401,6 +444,7 @@ async def enqueue_async(
     tags: list[str] | None = None,
     timeout_seconds: int | None = None,
     depends_on: list[int] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> int:
     """Insert a job using ``conn`` — typically the caller's transaction.
 
@@ -410,6 +454,7 @@ async def enqueue_async(
     when = _coerce_scheduled_at(scheduled_at)
     tags_value = list(tags or [])
     depends_value = [int(x) for x in (depends_on or [])]
+    meta_value = _args_dict(metadata)
 
     if unique_key is None:
         row = await conn.fetchrow(
@@ -424,6 +469,7 @@ async def enqueue_async(
             tags_value,
             timeout_seconds,
             depends_value,
+            meta_value,
         )
         assert row is not None
         return cast(int, row["id"])
@@ -440,6 +486,7 @@ async def enqueue_async(
         tags_value,
         timeout_seconds,
         depends_value,
+        meta_value,
     )
     assert row is not None, "unique INSERT CTE must return a row"
     return cast(int, row["id"])
@@ -459,6 +506,7 @@ class JobInsert:
     tags: list[str] | None = None
     timeout_seconds: int | None = None
     depends_on: list[int] | None = None
+    metadata: dict[str, Any] | None = None
 
 
 async def enqueue_many_async(conn: asyncpg.Connection, jobs: list[JobInsert]) -> int:
@@ -484,6 +532,7 @@ async def enqueue_many_async(conn: asyncpg.Connection, jobs: list[JobInsert]) ->
             list(j.tags or []),
             j.timeout_seconds,
             [int(x) for x in (j.depends_on or [])],
+            _args_dict(j.metadata),
         )
         for j in jobs
     ]
@@ -520,14 +569,28 @@ async def mark_completed_async(conn: asyncpg.Connection, job_id: int, *, result:
     await conn.execute(_MARK_COMPLETED_PG, job_id, result)
 
 
+DEFAULT_ERROR_CAP = 20
+
+
 async def mark_retryable_async(
-    conn: asyncpg.Connection, job_id: int, scheduled_at: datetime, error: dict[str, Any]
+    conn: asyncpg.Connection,
+    job_id: int,
+    scheduled_at: datetime,
+    error: dict[str, Any],
+    *,
+    error_cap: int = DEFAULT_ERROR_CAP,
 ) -> None:
-    await conn.execute(_MARK_RETRYABLE_PG, job_id, scheduled_at, [error])
+    await conn.execute(_MARK_RETRYABLE_PG, job_id, scheduled_at, [error], error_cap)
 
 
-async def mark_discarded_async(conn: asyncpg.Connection, job_id: int, error: dict[str, Any]) -> None:
-    await conn.execute(_MARK_DISCARDED_PG, job_id, [error])
+async def mark_discarded_async(
+    conn: asyncpg.Connection,
+    job_id: int,
+    error: dict[str, Any],
+    *,
+    error_cap: int = DEFAULT_ERROR_CAP,
+) -> None:
+    await conn.execute(_MARK_DISCARDED_PG, job_id, [error], error_cap)
 
 
 async def reset_to_available_async(conn: asyncpg.Connection, job_id: int, scheduled_at: datetime) -> None:
@@ -627,6 +690,16 @@ async def cron_try_lock_async(conn: asyncpg.Connection, key: int) -> bool:
 
 async def cron_unlock_async(conn: asyncpg.Connection, key: int) -> None:
     await conn.execute("SELECT pg_advisory_unlock($1)", key)
+
+
+async def archive_terminal_async(conn: asyncpg.Connection, *, older_than_seconds: float) -> int:
+    """Move ``completed/discarded/cancelled`` jobs older than the cutoff to the archive table.
+
+    Returns the count of moved rows.
+    """
+    interval = timedelta(seconds=max(older_than_seconds, 0.0))
+    rows = await conn.fetch(_ARCHIVE_TERMINAL_PG, interval)
+    return len(rows)
 
 
 async def cancel_blocked_dependents_async(
@@ -747,11 +820,13 @@ def enqueue_sync(
     tags: list[str] | None = None,
     timeout_seconds: int | None = None,
     depends_on: list[int] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> int:
     args_json = _args_json(args)
     when = _coerce_scheduled_at(scheduled_at)
     tags_value = list(tags or [])
     depends_value = [int(x) for x in (depends_on or [])]
+    meta_json = _args_json(metadata)
 
     with conn.cursor() as cur:
         if unique_key is None:
@@ -768,6 +843,7 @@ def enqueue_sync(
                     tags_value,
                     timeout_seconds,
                     depends_value,
+                    meta_json,
                 ),
             )
             row = cur.fetchone()
@@ -787,6 +863,7 @@ def enqueue_sync(
                 tags_value,
                 timeout_seconds,
                 depends_value,
+                meta_json,
                 unique_key,
             ),
         )
