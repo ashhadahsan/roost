@@ -19,7 +19,12 @@ F = TypeVar("F", bound=Callable[..., Any])
 class TaskDefaults:
     """Per-task enqueue defaults declared on ``@job(...)``.
 
-    These are merged into ``enqueue`` calls — explicit kwargs always win.
+    The first five (``queue`` … ``timeout_seconds``) are merged into
+    ``enqueue`` calls — explicit kwargs always win.
+
+    The throttling fields (``rate_per_minute``, ``max_concurrency``) are
+    enforced at fetch time by the worker. Workers read the registry and
+    pass the limits into the fetch SQL.
     """
 
     queue: str | None = None
@@ -27,6 +32,8 @@ class TaskDefaults:
     max_attempts: int | None = None
     tags: tuple[str, ...] | None = None
     timeout_seconds: int | None = None
+    rate_per_minute: int | None = None
+    max_concurrency: int | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +89,8 @@ def job(
     max_attempts: int | None = None,
     tags: list[str] | tuple[str, ...] | None = None,
     timeout_seconds: int | None = None,
+    rate_per_minute: int | None = None,
+    max_concurrency: int | None = None,
     registry: HandlerRegistry | None = None,
 ) -> Callable[[F], F]:
     """Register ``func`` as the handler for the task ``name``.
@@ -104,6 +113,8 @@ def job(
         max_attempts=max_attempts,
         tags=tuple(tags) if tags is not None else None,
         timeout_seconds=timeout_seconds,
+        rate_per_minute=rate_per_minute,
+        max_concurrency=max_concurrency,
     )
 
     def _decorate(func: F) -> F:

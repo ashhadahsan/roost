@@ -125,6 +125,7 @@ class AsyncRoost:
         unique_key: str | None = None,
         tags: list[str] | None = None,
         timeout_seconds: int | None = None,
+        depends_on: list[int] | None = None,
         conn: asyncpg.Connection | None = None,
     ) -> int:
         """Insert a job. Pass ``conn=`` to enqueue inside the caller's txn.
@@ -161,6 +162,7 @@ class AsyncRoost:
             unique_key=unique_key,
             tags=tags,
             timeout_seconds=timeout_seconds,
+            depends_on=depends_on,
         )
         observability.JOBS_ENQUEUED.labels(queue=queue, task=name).inc()
 

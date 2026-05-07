@@ -35,3 +35,4 @@ class Job(BaseModel):
     timeout_seconds: int | None = None
     cancel_requested: bool = False
     result: Any | None = None
+    depends_on: list[int] = Field(default_factory=list)

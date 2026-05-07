@@ -169,6 +169,19 @@ class Worker:
         async with pool.acquire() as conn:
             await repo.promote_retryable_async(conn)
 
+    def _task_limits(self) -> dict[str, tuple[int | None, int | None]]:
+        """Snapshot per-task throttling from the registered handler defaults."""
+        out: dict[str, tuple[int | None, int | None]] = {}
+        for name in self.registry.names():
+            spec = self.registry.get(name)
+            if spec is None:
+                continue
+            rate = spec.defaults.rate_per_minute
+            conc = spec.defaults.max_concurrency
+            if rate is not None or conc is not None:
+                out[spec.name] = (rate, conc)
+        return out
+
     async def _fetch_batch(self, pool: asyncpg.Pool) -> int:
         free_slots = self.concurrency - len(self._inflight)
         if free_slots <= 0:
@@ -176,8 +189,9 @@ class Worker:
             return 0
 
         batch_size = min(self.prefetch, free_slots)
+        task_limits = self._task_limits()
         async with pool.acquire() as conn, conn.transaction():
-            jobs = await repo.fetch_available_async(conn, self.queues, batch_size)
+            jobs = await repo.fetch_available_async(conn, self.queues, batch_size, task_limits=task_limits)
 
         for job in jobs:
             task = asyncio.create_task(self._dispatch(pool, job), name=f"roost-job-{job.id}")
@@ -437,6 +451,7 @@ class Worker:
                     gced = await repo.gc_workers_async(
                         conn, stale_after_seconds=max(self.heartbeat_interval * 4, 60.0)
                     )
+                    blocked = await repo.cancel_blocked_dependents_async(conn)
                 if reaped:
                     _log.warning(
                         "worker.reaped_orphans",
@@ -445,6 +460,8 @@ class Worker:
                     )
                 if gced:
                     _log.info("worker.gc_workers", count=gced)
+                if blocked:
+                    _log.info("worker.blocked_dependents_cancelled", count=len(blocked), ids=blocked)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

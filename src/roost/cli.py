@@ -47,6 +47,75 @@ def version() -> None:
     typer.echo(__version__)
 
 
+migrate_app = typer.Typer(name="migrate", help="Schema migrations.", no_args_is_help=True)
+app.add_typer(migrate_app)
+
+
+@migrate_app.command("up")
+def migrate_up(
+    dsn: Annotated[str | None, typer.Option(help="Postgres DSN (or set ROOST_DSN).")] = None,
+) -> None:
+    """Apply every pending migration."""
+    import psycopg
+
+    from roost._core.migrations import apply_pending_sync
+
+    target = _resolve_dsn(dsn)
+    with psycopg.connect(target) as conn:
+        applied = apply_pending_sync(conn)
+    if applied:
+        typer.secho(f"applied: {applied}", fg=typer.colors.GREEN)
+    else:
+        typer.secho("nothing to apply — already at latest", fg=typer.colors.CYAN)
+
+
+@migrate_app.command("down")
+def migrate_down(
+    target_version: int = typer.Argument(..., help="Roll back to (and including) this version."),
+    dsn: Annotated[str | None, typer.Option(help="Postgres DSN (or set ROOST_DSN).")] = None,
+) -> None:
+    """Roll back to ``target_version`` (exclusive of versions above)."""
+    import psycopg
+
+    from roost._core.migrations import IrreversibleMigration, rollback_to_sync
+
+    target = _resolve_dsn(dsn)
+    try:
+        with psycopg.connect(target) as conn:
+            reverted = rollback_to_sync(conn, target_version)
+    except IrreversibleMigration as exc:
+        typer.secho(f"refused: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
+    if reverted:
+        typer.secho(f"reverted: {reverted}", fg=typer.colors.YELLOW)
+    else:
+        typer.secho("no migrations above target — nothing to do", fg=typer.colors.CYAN)
+
+
+@migrate_app.command("status")
+def migrate_status(
+    dsn: Annotated[str | None, typer.Option(help="Postgres DSN (or set ROOST_DSN).")] = None,
+) -> None:
+    """Show applied vs available migrations."""
+    import psycopg
+
+    from roost._core.migrations import MIGRATIONS, applied_versions_sync
+
+    target = _resolve_dsn(dsn)
+    try:
+        with psycopg.connect(target) as conn:
+            applied = set(applied_versions_sync(conn))
+    except Exception as exc:  # pragma: no cover — defensive
+        typer.secho(f"error: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"{'version':<8}  {'name':<30}  status")
+    typer.echo(f"{'-' * 8}  {'-' * 30}  ------")
+    for migration in sorted(MIGRATIONS, key=lambda m: m.version):
+        marker = "applied" if migration.version in applied else "pending"
+        typer.echo(f"{migration.version:<8}  {migration.name:<30}  {marker}")
+
+
 @app.command()
 def init(
     apply: Annotated[

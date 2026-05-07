@@ -28,19 +28,19 @@ if TYPE_CHECKING:  # pragma: no cover
 # ---------------------------------------------------------------------------
 
 _ENQUEUE_BASE_COLS = (
-    "task, args, queue, priority, max_attempts, scheduled_at, unique_key, tags, timeout_seconds"
+    "task, args, queue, priority, max_attempts, scheduled_at, unique_key, tags, timeout_seconds, depends_on"
 )
 
 _INSERT_PLAIN_PG = f"""
 INSERT INTO roost.jobs ({_ENQUEUE_BASE_COLS})
-VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8::text[], $9)
+VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8::text[], $9, $10::bigint[])
 RETURNING id
 """
 
 _INSERT_UNIQUE_PG = f"""
 WITH attempted AS (
     INSERT INTO roost.jobs ({_ENQUEUE_BASE_COLS})
-    VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8::text[], $9)
+    VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8::text[], $9, $10::bigint[])
     ON CONFLICT (unique_key)
       WHERE unique_key IS NOT NULL AND state IN ('available','executing','retryable')
     DO NOTHING
@@ -58,14 +58,14 @@ SELECT j.id, false AS inserted
 
 _INSERT_PLAIN_PSY = f"""
 INSERT INTO roost.jobs ({_ENQUEUE_BASE_COLS})
-VALUES (%s, %s::jsonb, %s, %s, %s, %s, %s, %s::text[], %s)
+VALUES (%s, %s::jsonb, %s, %s, %s, %s, %s, %s::text[], %s, %s::bigint[])
 RETURNING id
 """
 
 _INSERT_UNIQUE_PSY = f"""
 WITH attempted AS (
     INSERT INTO roost.jobs ({_ENQUEUE_BASE_COLS})
-    VALUES (%s, %s::jsonb, %s, %s, %s, %s, %s, %s::text[], %s)
+    VALUES (%s, %s::jsonb, %s, %s, %s, %s, %s, %s::text[], %s, %s::bigint[])
     ON CONFLICT (unique_key)
       WHERE unique_key IS NOT NULL AND state IN ('available','executing','retryable')
     DO NOTHING
@@ -82,14 +82,53 @@ SELECT j.id, false AS inserted
 """
 
 _FETCH_AVAILABLE_PG = """
-WITH picked AS (
-    SELECT id
-      FROM roost.jobs
-     WHERE state = 'available'
-       AND queue = ANY($1::text[])
-       AND scheduled_at <= now()
-       AND queue NOT IN (SELECT name FROM roost.queues WHERE paused_at IS NOT NULL)
-     ORDER BY priority ASC, scheduled_at ASC, id ASC
+WITH limits AS (
+    SELECT t.task,
+           t.rate_per_minute,
+           t.max_concurrency
+      FROM unnest($3::text[], $4::int[], $5::int[])
+        AS t(task, rate_per_minute, max_concurrency)
+), candidates AS (
+    SELECT j.id,
+           j.task,
+           j.priority,
+           j.scheduled_at,
+           l.rate_per_minute,
+           l.max_concurrency,
+           (SELECT COUNT(*) FROM roost.jobs e
+             WHERE e.task = j.task AND e.state = 'executing') AS exec_now,
+           (SELECT COUNT(*) FROM roost.jobs r
+             WHERE r.task = j.task
+               AND r.attempted_at >= now() - interval '1 minute') AS rate_now
+      FROM roost.jobs j
+      LEFT JOIN limits l ON l.task = j.task
+     WHERE j.state = 'available'
+       AND j.queue = ANY($1::text[])
+       AND j.scheduled_at <= now()
+       AND j.queue NOT IN (SELECT name FROM roost.queues WHERE paused_at IS NOT NULL)
+       AND (
+           cardinality(j.depends_on) = 0
+           OR NOT EXISTS (
+               SELECT 1 FROM roost.jobs p
+                WHERE p.id = ANY(j.depends_on)
+                  AND p.state <> 'completed'
+           )
+       )
+), ranked AS (
+    SELECT *,
+           ROW_NUMBER() OVER (PARTITION BY task ORDER BY priority, scheduled_at, id) AS rn_task
+      FROM candidates
+), allowed AS (
+    SELECT id, priority, scheduled_at
+      FROM ranked
+     WHERE (max_concurrency IS NULL OR exec_now + rn_task <= max_concurrency)
+       AND (rate_per_minute IS NULL OR rate_now + rn_task <= rate_per_minute)
+), picked AS (
+    SELECT j.id
+      FROM roost.jobs j
+      JOIN allowed a ON a.id = j.id
+     WHERE j.state = 'available'
+     ORDER BY j.priority ASC, j.scheduled_at ASC, j.id ASC
      FOR UPDATE SKIP LOCKED
      LIMIT $2
 )
@@ -256,10 +295,32 @@ UPDATE roost.jobs
 
 _BULK_INSERT_PG = f"""
 INSERT INTO roost.jobs ({_ENQUEUE_BASE_COLS})
-VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8::text[], $9)
+VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8::text[], $9, $10::bigint[])
 ON CONFLICT (unique_key)
   WHERE unique_key IS NOT NULL AND state IN ('available','executing','retryable')
 DO NOTHING
+"""
+
+_CANCEL_BLOCKED_DEPENDENTS_PG = """
+WITH blocked AS (
+    SELECT j.id
+      FROM roost.jobs j
+     WHERE j.state = 'available'
+       AND cardinality(j.depends_on) > 0
+       AND EXISTS (
+           SELECT 1 FROM roost.jobs p
+            WHERE p.id = ANY(j.depends_on)
+              AND p.state IN ('discarded', 'cancelled')
+       )
+     FOR UPDATE SKIP LOCKED
+)
+UPDATE roost.jobs j
+   SET state = 'cancelled',
+       cancelled_at = now(),
+       errors = j.errors || $1::jsonb
+  FROM blocked
+ WHERE j.id = blocked.id
+RETURNING j.id
 """
 
 # ---------------------------------------------------------------------------
@@ -321,9 +382,10 @@ async def init_connection(conn: asyncpg.Connection) -> None:
 
 
 async def apply_schema_async(conn: asyncpg.Connection) -> None:
-    from roost._core.schema import migration_sql
+    """Bring the schema fully up to date by running pending migrations."""
+    from roost._core.migrations import apply_pending_async
 
-    await conn.execute(migration_sql())
+    await apply_pending_async(conn)
 
 
 async def enqueue_async(
@@ -338,6 +400,7 @@ async def enqueue_async(
     unique_key: str | None = None,
     tags: list[str] | None = None,
     timeout_seconds: int | None = None,
+    depends_on: list[int] | None = None,
 ) -> int:
     """Insert a job using ``conn`` — typically the caller's transaction.
 
@@ -346,6 +409,7 @@ async def enqueue_async(
     args_value = _args_dict(args)
     when = _coerce_scheduled_at(scheduled_at)
     tags_value = list(tags or [])
+    depends_value = [int(x) for x in (depends_on or [])]
 
     if unique_key is None:
         row = await conn.fetchrow(
@@ -359,6 +423,7 @@ async def enqueue_async(
             None,
             tags_value,
             timeout_seconds,
+            depends_value,
         )
         assert row is not None
         return cast(int, row["id"])
@@ -374,6 +439,7 @@ async def enqueue_async(
         unique_key,
         tags_value,
         timeout_seconds,
+        depends_value,
     )
     assert row is not None, "unique INSERT CTE must return a row"
     return cast(int, row["id"])
@@ -392,6 +458,7 @@ class JobInsert:
     unique_key: str | None = None
     tags: list[str] | None = None
     timeout_seconds: int | None = None
+    depends_on: list[int] | None = None
 
 
 async def enqueue_many_async(conn: asyncpg.Connection, jobs: list[JobInsert]) -> int:
@@ -416,6 +483,7 @@ async def enqueue_many_async(conn: asyncpg.Connection, jobs: list[JobInsert]) ->
             j.unique_key,
             list(j.tags or []),
             j.timeout_seconds,
+            [int(x) for x in (j.depends_on or [])],
         )
         for j in jobs
     ]
@@ -423,8 +491,27 @@ async def enqueue_many_async(conn: asyncpg.Connection, jobs: list[JobInsert]) ->
     return len(rows)
 
 
-async def fetch_available_async(conn: asyncpg.Connection, queues: list[str], limit: int) -> list[Job]:
-    rows = await conn.fetch(_FETCH_AVAILABLE_PG, queues, limit)
+async def fetch_available_async(
+    conn: asyncpg.Connection,
+    queues: list[str],
+    limit: int,
+    *,
+    task_limits: dict[str, tuple[int | None, int | None]] | None = None,
+) -> list[Job]:
+    """Pick up to ``limit`` jobs from the listed queues and mark them ``executing``.
+
+    ``task_limits`` is ``{task: (rate_per_minute, max_concurrency)}`` — pass
+    ``None`` for either field to skip that gate. Tasks not in the mapping are
+    unrestricted.
+    """
+    tasks: list[str] = []
+    rates: list[int | None] = []
+    concs: list[int | None] = []
+    for task, (rate, conc) in (task_limits or {}).items():
+        tasks.append(task)
+        rates.append(rate)
+        concs.append(conc)
+    rows = await conn.fetch(_FETCH_AVAILABLE_PG, queues, limit, tasks, rates, concs)
     return [_record_to_job(r) for r in rows]
 
 
@@ -542,6 +629,24 @@ async def cron_unlock_async(conn: asyncpg.Connection, key: int) -> None:
     await conn.execute("SELECT pg_advisory_unlock($1)", key)
 
 
+async def cancel_blocked_dependents_async(
+    conn: asyncpg.Connection,
+) -> list[int]:
+    """Cancel jobs whose parents ended in ``discarded`` or ``cancelled``.
+
+    Returns the list of cancelled ids.
+    """
+    error_payload = [
+        {
+            "at": _utcnow().isoformat(),
+            "error": "BlockedDependency: a parent job ended in a non-completed state",
+            "trace": "",
+        }
+    ]
+    rows = await conn.fetch(_CANCEL_BLOCKED_DEPENDENTS_PG, error_payload)
+    return [int(r["id"]) for r in rows]
+
+
 async def reap_orphans_async(
     conn: asyncpg.Connection, *, stale_after_seconds: float
 ) -> list[tuple[int, str]]:
@@ -623,10 +728,10 @@ async def cron_should_run_async(conn: asyncpg.Connection, name: str, due_at: dat
 
 
 def apply_schema_sync(conn: psycopg.Connection[Any]) -> None:
-    from roost._core.schema import migration_sql
+    """Bring the schema fully up to date by running pending migrations."""
+    from roost._core.migrations import apply_pending_sync
 
-    with conn.cursor() as cur:
-        cur.execute(migration_sql())
+    apply_pending_sync(conn)
 
 
 def enqueue_sync(
@@ -641,10 +746,12 @@ def enqueue_sync(
     unique_key: str | None = None,
     tags: list[str] | None = None,
     timeout_seconds: int | None = None,
+    depends_on: list[int] | None = None,
 ) -> int:
     args_json = _args_json(args)
     when = _coerce_scheduled_at(scheduled_at)
     tags_value = list(tags or [])
+    depends_value = [int(x) for x in (depends_on or [])]
 
     with conn.cursor() as cur:
         if unique_key is None:
@@ -660,6 +767,7 @@ def enqueue_sync(
                     None,
                     tags_value,
                     timeout_seconds,
+                    depends_value,
                 ),
             )
             row = cur.fetchone()
@@ -678,6 +786,7 @@ def enqueue_sync(
                 unique_key,
                 tags_value,
                 timeout_seconds,
+                depends_value,
                 unique_key,
             ),
         )
