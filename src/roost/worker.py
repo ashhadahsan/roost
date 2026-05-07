@@ -37,6 +37,7 @@ from roost._core.notify import CHANNEL_CANCEL_REQUESTED, CHANNEL_INSERTED
 from roost._core.retry import BackoffStrategy, resolve
 from roost.decorators import DEFAULT_HANDLERS, HandlerRegistry, HandlerSpec
 from roost.exceptions import SnoozeJob, UnknownTaskError
+from roost.hooks import Hooks, call_after, call_before
 
 if TYPE_CHECKING:  # pragma: no cover
     import asyncpg
@@ -72,6 +73,7 @@ class Worker:
         archive_interval: float = 60.0,
         startup_max_retries: int = 30,
         startup_retry_delay: float = 1.0,
+        hooks: Hooks | None = None,
     ) -> None:
         self.dsn = dsn
         self.queues = list(queues)
@@ -95,6 +97,7 @@ class Worker:
         self.archive_interval = archive_interval
         self.startup_max_retries = max(1, int(startup_max_retries))
         self.startup_retry_delay = startup_retry_delay
+        self.hooks = hooks
 
         self.id = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         self._stop = asyncio.Event()
@@ -244,7 +247,11 @@ class Worker:
         spec = self.registry.get(job.task)
         labels = {"queue": job.queue, "task": job.task}
         started = asyncio.get_running_loop().time()
+        ctx: dict[str, Any] = {}
+        result: Any = None
+        error: BaseException | None = None
         try:
+            await self._safely_call_before(job, ctx)
             if spec is None:
                 raise UnknownTaskError(f"no handler registered for task '{job.task}'")
             result = await self._invoke(spec, job)
@@ -261,12 +268,34 @@ class Worker:
                 duration=round(duration, 4),
             )
         except SnoozeJob as snooze:
+            error = snooze
             when = datetime.now(tz=timezone.utc) + timedelta(seconds=snooze.seconds)
             async with pool.acquire() as conn:
                 await repo.snooze_async(conn, job.id, when)
             _log.info("job.snoozed", id=job.id, task=job.task, seconds=snooze.seconds)
         except BaseException as exc:  # noqa: BLE001 — surfaced into errors[]
+            error = exc
             await self._handle_failure(pool, job, exc)
+        finally:
+            await self._safely_call_after(job, result=result, error=error, ctx=ctx)
+
+    async def _safely_call_before(self, job: Any, ctx: dict[str, Any]) -> None:
+        if self.hooks is None:
+            return
+        try:
+            await call_before(self.hooks, job, ctx)
+        except Exception as exc:
+            _log.warning("hooks.before_failed", id=job.id, error=str(exc))
+
+    async def _safely_call_after(
+        self, job: Any, *, result: Any, error: BaseException | None, ctx: dict[str, Any]
+    ) -> None:
+        if self.hooks is None:
+            return
+        try:
+            await call_after(self.hooks, job, result=result, error=error, ctx=ctx)
+        except Exception as exc:
+            _log.warning("hooks.after_failed", id=job.id, error=str(exc))
 
     @staticmethod
     async def _invoke(spec: HandlerSpec, job: Any) -> Any:

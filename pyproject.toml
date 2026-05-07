@@ -56,6 +56,9 @@ otel = [
 metrics = [
     "prometheus-client>=0.21",
 ]
+reload = [
+    "watchfiles>=0.24",
+]
 
 [project.urls]
 Homepage = "https://github.com/ashhadahsan/roost"

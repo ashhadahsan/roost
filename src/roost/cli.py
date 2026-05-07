@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import os
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -49,6 +49,55 @@ def version() -> None:
 
 migrate_app = typer.Typer(name="migrate", help="Schema migrations.", no_args_is_help=True)
 app.add_typer(migrate_app)
+
+
+tasks_app = typer.Typer(
+    name="tasks",
+    help="Inspect registered tasks (defaults, args schemas).",
+    no_args_is_help=True,
+)
+app.add_typer(tasks_app)
+
+
+@tasks_app.command("export")
+def tasks_export(
+    module: Annotated[
+        list[str] | None,
+        typer.Option("--module", "-m", help="Dotted module to import (registers @job/@cron)."),
+    ] = None,
+) -> None:
+    """Emit a JSON manifest of registered tasks + their args JSON Schema.
+
+    Useful for typed clients that want to validate ``args`` against the
+    handler's Pydantic model without importing Python code.
+    """
+    import json as _json
+
+    from roost.decorators import DEFAULT_HANDLERS
+
+    _import_modules(list(module or []))
+
+    manifest = []
+    for name in DEFAULT_HANDLERS.names():
+        spec = DEFAULT_HANDLERS.get(name)
+        if spec is None:
+            continue
+        entry: dict[str, Any] = {
+            "name": spec.name,
+            "is_async": spec.is_async,
+            "defaults": {
+                "queue": spec.defaults.queue,
+                "priority": spec.defaults.priority,
+                "max_attempts": spec.defaults.max_attempts,
+                "tags": list(spec.defaults.tags) if spec.defaults.tags is not None else None,
+                "timeout_seconds": spec.defaults.timeout_seconds,
+                "rate_per_minute": spec.defaults.rate_per_minute,
+                "max_concurrency": spec.defaults.max_concurrency,
+            },
+            "args_schema": (spec.args_model.model_json_schema() if spec.args_model is not None else None),
+        }
+        manifest.append(entry)
+    typer.echo(_json.dumps({"tasks": manifest}, indent=2))
 
 
 @migrate_app.command("up")
@@ -145,6 +194,13 @@ def run(
         list[str] | None,
         typer.Option("--module", "-m", help="Dotted module to import (registers @job/@cron). Repeatable."),
     ] = None,
+    reload: Annotated[
+        bool,
+        typer.Option(
+            "--reload",
+            help="Dev mode: watch handler modules and exit on change so the supervisor restarts.",
+        ),
+    ] = False,
     dsn: Annotated[str | None, typer.Option(help="Postgres DSN (or set ROOST_DSN).")] = None,
 ) -> None:
     """Run a worker."""
@@ -169,13 +225,62 @@ def run(
     async def _main() -> None:
         loop = asyncio.get_running_loop()
         worker.install_signal_handlers(loop)
-        await worker.run()
+        watcher: asyncio.Task[None] | None = None
+        if reload:
+            watcher = _start_reload_watcher(worker, list(module or []))
+        try:
+            await worker.run()
+        finally:
+            if watcher is not None:
+                watcher.cancel()
 
     typer.secho(
         f"roost worker queues={queue_list} concurrency={concurrency} dsn={target}",
         fg=typer.colors.CYAN,
     )
+    if reload:
+        typer.secho(
+            "  --reload: watching handler modules. Worker exits on change; "
+            "your supervisor (uvicorn-style) is responsible for restart.",
+            fg=typer.colors.YELLOW,
+        )
     asyncio.run(_main())
+
+
+def _start_reload_watcher(worker: Worker, modules: list[str]) -> asyncio.Task[None]:
+    """Watch the source files of imported handler modules; on change, request shutdown."""
+    try:
+        from watchfiles import awatch  # type: ignore[import-not-found]
+    except ImportError:
+        typer.secho(
+            "  --reload requires the optional `watchfiles` package: pip install watchfiles",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1) from None
+
+    paths: list[str] = []
+    for mod_name in modules:
+        try:
+            mod = importlib.import_module(mod_name)
+        except ImportError:
+            continue
+        path = getattr(mod, "__file__", None)
+        if path:
+            paths.append(path)
+
+    if not paths:
+        typer.secho(
+            "  --reload: no modules with importable source — pass --module / -m too.",
+            fg=typer.colors.YELLOW,
+        )
+
+    async def _watch() -> None:
+        async for changes in awatch(*paths):
+            typer.secho(f"  --reload: change detected ({changes!r}) — exiting.", fg=typer.colors.YELLOW)
+            worker.request_stop()
+            return
+
+    return asyncio.create_task(_watch(), name="roost-reload-watcher")
 
 
 @app.command()

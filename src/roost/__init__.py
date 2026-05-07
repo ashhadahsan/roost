@@ -31,6 +31,7 @@ from roost.exceptions import (
     UnknownTaskError,
     WorkerShutdown,
 )
+from roost.hooks import Hooks
 from roost.sync_api import Roost
 from roost.worker import Worker
 
@@ -42,6 +43,7 @@ __all__ = [
     "CronEntry",
     "DuplicateUniqueJobError",
     "HandlerRegistry",
+    "Hooks",
     "Job",
     "JobFailed",
     "JobInsert",

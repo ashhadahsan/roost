@@ -280,6 +280,7 @@ class AsyncRoost:
         archive_interval: float = 60.0,
         startup_max_retries: int = 30,
         startup_retry_delay: float = 1.0,
+        hooks: Any | None = None,
     ) -> Worker:
         """Construct a :class:`Worker` bound to this Roost's DSN."""
         return Worker(
@@ -301,6 +302,7 @@ class AsyncRoost:
             archive_interval=archive_interval,
             startup_max_retries=startup_max_retries,
             startup_retry_delay=startup_retry_delay,
+            hooks=hooks,
         )
 
     async def __aenter__(self) -> AsyncRoost:

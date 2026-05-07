@@ -25,9 +25,7 @@ async def test_metadata_round_trips(async_conn: asyncpg.Connection) -> None:
         task="t",
         metadata={"trace_id": "abc-123", "tenant": "acme"},
     )
-    row = await async_conn.fetchrow(
-        "SELECT metadata FROM roost.jobs WHERE id = $1", job_id
-    )
+    row = await async_conn.fetchrow("SELECT metadata FROM roost.jobs WHERE id = $1", job_id)
     assert row is not None
     assert row["metadata"] == {"trace_id": "abc-123", "tenant": "acme"}
 
@@ -65,9 +63,7 @@ async def test_errors_are_capped_to_last_n(async_conn: asyncpg.Connection) -> No
             {"attempt": i, "error": f"error #{i}", "trace": ""},
             error_cap=10,
         )
-    row = await async_conn.fetchrow(
-        "SELECT errors FROM roost.jobs WHERE id = $1", job_id
-    )
+    row = await async_conn.fetchrow("SELECT errors FROM roost.jobs WHERE id = $1", job_id)
     assert row is not None
     errors = row["errors"]
     assert len(errors) == 10  # only last 10 retained
@@ -90,9 +86,7 @@ async def test_errors_below_cap_keep_all(async_conn: asyncpg.Connection) -> None
             {"attempt": i, "error": f"e{i}", "trace": ""},
             error_cap=10,
         )
-    row = await async_conn.fetchrow(
-        "SELECT errors FROM roost.jobs WHERE id = $1", job_id
-    )
+    row = await async_conn.fetchrow("SELECT errors FROM roost.jobs WHERE id = $1", job_id)
     assert row is not None
     assert [e["error"] for e in row["errors"]] == ["e0", "e1", "e2"]
 
@@ -113,8 +107,7 @@ async def test_archive_moves_old_terminal_jobs(async_conn: asyncpg.Connection) -
         fresh_id,
     )
     await async_conn.execute(
-        "UPDATE roost.jobs SET state = 'completed', completed_at = now() - interval '1 hour' "
-        "WHERE id = $1",
+        "UPDATE roost.jobs SET state = 'completed', completed_at = now() - interval '1 hour' WHERE id = $1",
         stale_id,
     )
 
@@ -127,9 +120,7 @@ async def test_archive_moves_old_terminal_jobs(async_conn: asyncpg.Connection) -
     # The stale row is gone from roost.jobs and present in roost.jobs_archive.
     row = await async_conn.fetchrow("SELECT id FROM roost.jobs WHERE id = $1", stale_id)
     assert row is None
-    arch = await async_conn.fetchrow(
-        "SELECT id, state FROM roost.jobs_archive WHERE id = $1", stale_id
-    )
+    arch = await async_conn.fetchrow("SELECT id, state FROM roost.jobs_archive WHERE id = $1", stale_id)
     assert arch is not None
     assert arch["state"] == "completed"
 
@@ -183,9 +174,7 @@ def test_cli_requeue_filtered_by_queue(fresh_dsn: str) -> None:
         )
         conn.commit()
 
-    result = runner.invoke(
-        app, ["requeue", "--discarded", "--queue", "q1", "--dsn", fresh_dsn]
-    )
+    result = runner.invoke(app, ["requeue", "--discarded", "--queue", "q1", "--dsn", fresh_dsn])
     assert result.exit_code == 0
     assert "requeued 2 discarded job(s)" in result.stdout
 
