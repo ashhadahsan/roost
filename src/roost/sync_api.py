@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from roost import observability
 from roost._core import repo
+from roost.async_api import _apply_task_defaults
 from roost.decorators import DEFAULT_HANDLERS, HandlerRegistry, task_name
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -86,6 +87,21 @@ class Roost:
     ) -> int:
         name = task_name(task) if callable(task) else task
         args_dict = observability.inject_trace_context(_coerce_args(args))
+
+        spec = self.registry.get(name)
+        if spec is not None:
+            queue, priority, max_attempts, tags, timeout_seconds = _apply_task_defaults(
+                spec.defaults,
+                queue=queue,
+                priority=priority,
+                max_attempts=max_attempts,
+                tags=tags,
+                timeout_seconds=timeout_seconds,
+                queue_default="default",
+                priority_default=0,
+                max_attempts_default=20,
+            )
+
         observability.JOBS_ENQUEUED.labels(queue=queue, task=name).inc()
         kwargs: dict[str, Any] = dict(
             task=name,

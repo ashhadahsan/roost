@@ -20,8 +20,9 @@ from roost._core.retry import (
     linear,
 )
 from roost._core.states import JobState
+from roost._core.wait import JobFailed, JobOutcome, JobTimeoutError
 from roost.async_api import AsyncRoost
-from roost.decorators import HandlerRegistry, cron, job
+from roost.decorators import HandlerRegistry, TaskDefaults, cron, job
 from roost.exceptions import (
     DuplicateUniqueJobError,
     JobNotFoundError,
@@ -42,12 +43,16 @@ __all__ = [
     "DuplicateUniqueJobError",
     "HandlerRegistry",
     "Job",
+    "JobFailed",
     "JobInsert",
     "JobNotFoundError",
+    "JobOutcome",
     "JobState",
+    "JobTimeoutError",
     "Roost",
     "RoostError",
     "SnoozeJob",
+    "TaskDefaults",
     "UnknownTaskError",
     "Worker",
     "WorkerShutdown",

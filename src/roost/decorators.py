@@ -5,7 +5,7 @@ from __future__ import annotations
 import functools
 import inspect
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, TypeVar, cast
 
 from pydantic import BaseModel
@@ -16,11 +16,26 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 
 @dataclass(frozen=True)
+class TaskDefaults:
+    """Per-task enqueue defaults declared on ``@job(...)``.
+
+    These are merged into ``enqueue`` calls — explicit kwargs always win.
+    """
+
+    queue: str | None = None
+    priority: int | None = None
+    max_attempts: int | None = None
+    tags: tuple[str, ...] | None = None
+    timeout_seconds: int | None = None
+
+
+@dataclass(frozen=True)
 class HandlerSpec:
     name: str
     func: Callable[..., Any]
     is_async: bool
     args_model: type[BaseModel] | None = None
+    defaults: TaskDefaults = field(default_factory=TaskDefaults)
 
 
 class HandlerRegistry:
@@ -33,6 +48,7 @@ class HandlerRegistry:
         func: Callable[..., Any],
         *,
         args_model: type[BaseModel] | None = None,
+        defaults: TaskDefaults | None = None,
     ) -> None:
         if name in self._handlers and self._handlers[name].func is not func:
             raise ValueError(f"task '{name}' is already registered to a different function")
@@ -41,6 +57,7 @@ class HandlerRegistry:
             func=func,
             is_async=inspect.iscoroutinefunction(func),
             args_model=args_model,
+            defaults=defaults or TaskDefaults(),
         )
 
     def get(self, name: str) -> HandlerSpec | None:
@@ -60,28 +77,42 @@ def job(
     name: str,
     *,
     args_model: type[BaseModel] | None = None,
+    queue: str | None = None,
+    priority: int | None = None,
+    max_attempts: int | None = None,
+    tags: list[str] | tuple[str, ...] | None = None,
+    timeout_seconds: int | None = None,
     registry: HandlerRegistry | None = None,
 ) -> Callable[[F], F]:
     """Register ``func`` as the handler for the task ``name``.
 
+    Per-task defaults (``queue``, ``priority``, ``max_attempts``, ``tags``,
+    ``timeout_seconds``) are applied to every enqueue of this task unless
+    the caller passes an explicit kwarg.
+
     Pass ``args_model=`` (a Pydantic model) to validate enqueued args at
-    handler-call time. The model is instantiated from ``args`` and the
-    handler is invoked with its fields as kwargs — so the handler signature
-    can stay the same.
+    handler-call time.
 
     The decorated function is returned untouched — it can still be called
     directly in tests.
     """
 
     target = registry or DEFAULT_HANDLERS
+    defaults = TaskDefaults(
+        queue=queue,
+        priority=priority,
+        max_attempts=max_attempts,
+        tags=tuple(tags) if tags is not None else None,
+        timeout_seconds=timeout_seconds,
+    )
 
     def _decorate(func: F) -> F:
         if args_model is not None:
             wrapped = _wrap_with_validation(func, args_model)
-            target.register(name, wrapped, args_model=args_model)
+            target.register(name, wrapped, args_model=args_model, defaults=defaults)
             wrapped.__roost_task_name__ = name  # type: ignore[attr-defined]
             return cast(F, wrapped)
-        target.register(name, func)
+        target.register(name, func, defaults=defaults)
         func.__roost_task_name__ = name  # type: ignore[attr-defined]
         return func
 
@@ -116,12 +147,14 @@ def cron(
     args: dict[str, Any] | None = None,
     priority: int = 0,
     max_attempts: int = 20,
+    timezone: str | None = None,
     handler_registry: HandlerRegistry | None = None,
 ) -> Callable[[F], F]:
     """Register a function as a cron handler under ``expression``.
 
-    Equivalent to ``@job("name") + cron entry`` — the registered cron entry
-    enqueues the named task on schedule.
+    ``timezone`` accepts an IANA name (``"America/Los_Angeles"``,
+    ``"Europe/Berlin"``). Defaults to UTC. The cron expression is then
+    interpreted in that local timezone, including DST.
     """
     handler_target = handler_registry or DEFAULT_HANDLERS
 
@@ -138,6 +171,7 @@ def cron(
                 queue=queue,
                 priority=priority,
                 max_attempts=max_attempts,
+                timezone_name=timezone,
             )
         )
         return func

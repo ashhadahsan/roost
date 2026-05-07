@@ -12,11 +12,14 @@ from roost import observability
 from roost._core import repo
 from roost._core.repo import JobInsert
 from roost._core.retry import BackoffStrategy
-from roost.decorators import DEFAULT_HANDLERS, HandlerRegistry, task_name
+from roost.decorators import DEFAULT_HANDLERS, HandlerRegistry, TaskDefaults, task_name
 from roost.worker import Worker
 
 if TYPE_CHECKING:  # pragma: no cover
     import asyncpg
+
+
+_SENTINEL: Any = object()
 
 
 def _coerce_args(args: dict[str, Any] | BaseModel | None) -> dict[str, Any]:
@@ -25,6 +28,40 @@ def _coerce_args(args: dict[str, Any] | BaseModel | None) -> dict[str, Any]:
     if isinstance(args, BaseModel):
         return args.model_dump()
     return args
+
+
+def _apply_task_defaults(
+    defaults: TaskDefaults,
+    *,
+    queue: str,
+    priority: int,
+    max_attempts: int,
+    tags: list[str] | None,
+    timeout_seconds: int | None,
+    queue_default: str,
+    priority_default: int,
+    max_attempts_default: int,
+) -> tuple[str, int, int, list[str] | None, int | None]:
+    """Pick the registered task's defaults when the caller didn't override.
+
+    The "did the caller override?" check is done via comparison to the
+    facade's own kwarg defaults — there's no way to detect missing kwargs
+    after the call so we approximate: if the caller passed the same value
+    the facade defaults to, we treat it as "not overridden" and use the
+    task default.
+    """
+    final_queue = defaults.queue if (queue == queue_default and defaults.queue) else queue
+    final_priority = (
+        defaults.priority if (priority == priority_default and defaults.priority is not None) else priority
+    )
+    final_max_attempts = (
+        defaults.max_attempts
+        if (max_attempts == max_attempts_default and defaults.max_attempts is not None)
+        else max_attempts
+    )
+    final_tags = list(defaults.tags) if (tags is None and defaults.tags) else tags
+    final_timeout = defaults.timeout_seconds if (timeout_seconds is None) else timeout_seconds
+    return final_queue, final_priority, final_max_attempts, final_tags, final_timeout
 
 
 class AsyncRoost:
@@ -99,6 +136,20 @@ class AsyncRoost:
         """
         name = task_name(task) if callable(task) else task
         args_dict = observability.inject_trace_context(_coerce_args(args))
+
+        spec = self.registry.get(name)
+        if spec is not None:
+            queue, priority, max_attempts, tags, timeout_seconds = _apply_task_defaults(
+                spec.defaults,
+                queue=queue,
+                priority=priority,
+                max_attempts=max_attempts,
+                tags=tags,
+                timeout_seconds=timeout_seconds,
+                queue_default="default",
+                priority_default=0,
+                max_attempts_default=20,
+            )
 
         kwargs: dict[str, Any] = dict(
             task=name,
@@ -176,6 +227,30 @@ class AsyncRoost:
         pool = await self._ensure_pool()
         async with pool.acquire() as conn:
             return await repo.requeue_discarded_async(conn)
+
+    async def wait_for(
+        self,
+        job_id: int,
+        *,
+        timeout: float | None = 30.0,
+        poll_interval: float = 1.0,
+        raise_on_failure: bool = True,
+    ) -> Any:
+        """Block until ``job_id`` reaches a terminal state.
+
+        Returns a :class:`roost.JobOutcome`. By default raises
+        :class:`roost.JobFailed` when the job ended in ``discarded`` or
+        ``cancelled`` (set ``raise_on_failure=False`` to suppress).
+        """
+        from roost._core.wait import wait_for_async
+
+        return await wait_for_async(
+            self.dsn,
+            job_id,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            raise_on_failure=raise_on_failure,
+        )
 
     # ------------------------------------------------------------------
     # worker

@@ -15,6 +15,11 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from croniter import croniter
 
+try:  # 3.9+ stdlib; we require 3.10+ so always present
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover
+    ZoneInfo = None  # type: ignore[assignment,misc]
+
 from roost._core import repo
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -37,15 +42,32 @@ class CronEntry:
     queue: str = "default"
     priority: int = 0
     max_attempts: int = 20
-    timezone_name: str | None = None  # reserved; defaults to UTC
+    timezone_name: str | None = None  # IANA name; e.g. "America/Los_Angeles". None == UTC.
+
+    def _tz(self) -> Any:
+        if self.timezone_name is None or ZoneInfo is None:
+            return timezone.utc
+        return ZoneInfo(self.timezone_name)
+
+    def _localise(self, when: datetime) -> datetime:
+        """Render ``when`` in the entry's local timezone for cron evaluation."""
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return when.astimezone(self._tz())
 
     def next_after(self, now: datetime) -> datetime:
-        itr = croniter(self.expression, now)
-        return itr.get_next(datetime)
+        itr = croniter(self.expression, self._localise(now))
+        nxt = itr.get_next(datetime)
+        if nxt.tzinfo is None:
+            nxt = nxt.replace(tzinfo=self._tz())
+        return nxt.astimezone(timezone.utc)
 
     def previous_or_at(self, now: datetime) -> datetime:
-        itr = croniter(self.expression, now)
-        return itr.get_prev(datetime)
+        itr = croniter(self.expression, self._localise(now))
+        prev = itr.get_prev(datetime)
+        if prev.tzinfo is None:
+            prev = prev.replace(tzinfo=self._tz())
+        return prev.astimezone(timezone.utc)
 
 
 class CronRegistry:
