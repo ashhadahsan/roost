@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Roost">
+  <title>Roost</title>
+  <defs>
+    <linearGradient id="bodyGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3D7BB0"/>
+      <stop offset="100%" stop-color="#2A5478"/>
+    </linearGradient>
+    <linearGradient id="breastGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F2B856"/>
+      <stop offset="100%" stop-color="#D9952F"/>
+    </linearGradient>
+    <linearGradient id="branchGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#9C7A56"/>
+      <stop offset="100%" stop-color="#6E5238"/>
+    </linearGradient>
+  </defs>
+
+  <!-- rounded square plate -->
+  <rect width="256" height="256" rx="48" fill="#F4F6F8"/>
+
+  <!-- branch -->
+  <path d="M16 188 Q60 184 128 186 T240 190 L240 198 Q170 198 128 196 T16 196 Z" fill="url(#branchGrad)"/>
+  <path d="M196 186 q14 -10 28 -8 q-12 8 -28 8 z" fill="#6E5238" opacity="0.7"/>
+
+  <!-- tail -->
+  <path d="M58 134 Q34 124 30 96 q24 14 44 26 z" fill="#234D6E"/>
+
+  <!-- body -->
+  <ellipse cx="120" cy="142" rx="60" ry="46" fill="url(#bodyGrad)"/>
+
+  <!-- belly / breast -->
+  <path d="M86 158 Q108 188 142 178 Q150 152 122 142 Q98 138 86 158 Z" fill="url(#breastGrad)"/>
+
+  <!-- wing -->
+  <path d="M104 122 Q138 110 168 124 Q160 158 124 162 Q90 156 104 122 Z" fill="#23507A"/>
+  <path d="M120 130 Q146 128 162 138" stroke="#1A3E5F" stroke-width="2" fill="none" opacity="0.6"/>
+
+  <!-- head -->
+  <circle cx="172" cy="108" r="32" fill="url(#bodyGrad)"/>
+  <circle cx="172" cy="108" r="32" fill="#3D7BB0" opacity="0.0"/>
+
+  <!-- eye -->
+  <circle cx="180" cy="100" r="6" fill="#F4F6F8"/>
+  <circle cx="182" cy="100" r="3.5" fill="#142840"/>
+  <circle cx="183.2" cy="98.6" r="1.2" fill="#FFFFFF"/>
+
+  <!-- beak -->
+  <path d="M198 108 L222 112 L198 118 Z" fill="url(#breastGrad)"/>
+  <path d="M198 108 L222 112 L198 118 Z" fill="#000" opacity="0.05"/>
+
+  <!-- crest -->
+  <path d="M158 80 q4 -10 14 -12 q-2 8 -8 14 z" fill="#23507A"/>
+
+  <!-- legs -->
+  <rect x="116" y="184" width="3.5" height="12" rx="1.5" fill="#6E5238"/>
+  <rect x="138" y="184" width="3.5" height="12" rx="1.5" fill="#6E5238"/>
+  <path d="M112 196 l8 0 l-2 4 l-4 0 z" fill="#6E5238"/>
+  <path d="M134 196 l8 0 l-2 4 l-4 0 z" fill="#6E5238"/>
+</svg>

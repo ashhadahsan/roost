@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security disclosure
+    url: https://github.com/ashhadahsan/roost/security/advisories/new
+    about: Report security vulnerabilities privately. Do not file a public issue.
+  - name: Dashboard (roost-web)
+    url: https://github.com/ashhadahsan/roost-web/issues
+    about: Bugs and requests for the dashboard ship from a separate repo.
