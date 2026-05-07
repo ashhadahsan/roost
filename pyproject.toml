@@ -67,7 +67,7 @@ Changelog = "https://github.com/ashhadahsan/roost/blob/main/CHANGELOG.md"
 roost = "roost.cli:app"
 
 [build-system]
-requires = ["uv_build>=0.9.0,<0.10.0"]
+requires = ["uv_build>=0.9.0,<0.12.0"]
 build-backend = "uv_build"
 
 [tool.ruff]
