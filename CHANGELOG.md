@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-05-08
+
+First public release.
+
+### Distribution
+
+- Published on PyPI as **`pgroost`** (the bare `roost` name was reserved). Install with `pip install pgroost`. The import path stays `import roost` and the CLI command stays `roost`.
+
+### Added — pre-publish polish
+
+- **`roost doctor`** — health-check command + `Check` records covering migration state, NOTIFY trigger presence, recent worker heartbeats, and a job-state summary. Returns non-zero exit on any failure.
+- **`roost run --once`** + `Worker.run_once()` — drain currently-available jobs and exit. Useful for serverless / one-shot runners.
+- **`roost run --workers N`** — multi-process supervisor via `multiprocessing` spawn context. Each child re-imports user modules into a fresh interpreter (uvicorn-style). Pair with systemd / docker / k8s for restart semantics.
+- **Stable error codes** (`code: ClassVar[str]`) on every `RoostError` subclass plus `JobTimeoutError` / `JobFailed`. Lets users branch on errors programmatically instead of string-matching.
+- **`roost.tasks`** module — `specs()`, `get(name)`, `names()` over the registered handler set.
+- **Two-step claim** (`SELECT FOR UPDATE SKIP LOCKED` → `UPDATE` by ids) replacing the modifying-CTE pattern. Smaller contention surface, easier to reason about.
+- **Server-side `scheduled_at` default** — `COALESCE($N::timestamptz, now())` in INSERT. Fixes a subtle clock-skew bug where Python `datetime.now()` on the client could produce timestamps slightly ahead of Postgres `now()` (e.g. Docker testcontainers, k8s pods with unsynced clocks), making newly enqueued rows briefly invisible to `WHERE scheduled_at <= now()`.
+- **Test coverage at 86%**, 163 tests on real Postgres via `testcontainers` (no DB mocks).
+
 ### Added — v0.2 polish (post-initial-release)
 
 - **Per-task defaults on `@job`** — `queue`, `priority`, `max_attempts`, `tags`, `timeout_seconds`, plus throttling: `rate_per_minute`, `max_concurrency`. Explicit enqueue kwargs always win.
@@ -53,4 +72,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sphinx + Furo documentation site with quickstart, concepts, and recipes.
 - Community files: SECURITY.md, CODE_OF_CONDUCT.md, GitHub issue + PR templates, Dependabot config.
 
-[Unreleased]: https://github.com/ashhadahsan/roost/compare/v0.0.0...HEAD
+[Unreleased]: https://github.com/ashhadahsan/roost/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ashhadahsan/roost/releases/tag/v0.1.0

@@ -1,6 +1,6 @@
 [project]
 name = "pgroost"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Postgres-backed background job queue for Python — Oban for Pythonistas. Install: pip install pgroost; import: `import roost`."
 readme = "README.md"
 requires-python = ">=3.10"
