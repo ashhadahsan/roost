@@ -1,6 +1,6 @@
 # Grafana — Roost overview
 
-Pre-built dashboard for the Prometheus metrics that ship with Roost (`pip install roost[metrics]`).
+Pre-built dashboard for the Prometheus metrics that ship with Roost (`pip install pgroost[metrics]`).
 
 ## What's in it
 

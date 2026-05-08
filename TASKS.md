@@ -160,9 +160,9 @@ Concept: small bird perched on a branch, geometric mark. Palette: Postgres-blue 
 - [ ] Bump `version = "0.1.0"` in `pyproject.toml`
 - [ ] Update `CHANGELOG.md`
 - [ ] Tag `v0.1.0`, push tag → release.yml fires
-- [ ] Smoke: `pip install roost` in fresh venv, `roost --version`
+- [ ] Smoke: `pip install pgroost` in fresh venv, `roost --version`
 
-**Done when:** `roost==0.1.0` on PyPI, RTD shows v0.1.0 docs.
+**Done when:** `pgroost==0.1.0` on PyPI, RTD shows v0.1.0 docs.
 
 > ⚠️ Never run `uv publish` from a workstation. Tags are the only trigger.
 
@@ -190,7 +190,7 @@ Concept: small bird perched on a branch, geometric mark. Palette: Postgres-blue 
    - [ ] Forced failure → `retryable` → re-runs
 3. **CI matrix:** green on PG 13/14/15/16 × Python 3.10/3.11/3.12/3.13
 4. **Docs:** `roost.readthedocs.io` builds and renders the logo
-5. **PyPI:** `pip install roost` from a clean machine; `roost --version` → `0.1.0`
+5. **PyPI:** `pip install pgroost` from a clean machine; `roost --version` → `0.1.0`
 6. **Tag:** `git tag v0.1.0 && git push --tags` → `release.yml` succeeds; PyPI + RTD updated
 
 ---

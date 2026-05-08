@@ -4,8 +4,8 @@ The OpenTelemetry and Prometheus integrations are *optional* — both detect
 their dependencies at import time and degrade to no-ops when unavailable.
 Install the extras to opt in::
 
-    pip install roost[otel]      # opentelemetry-api
-    pip install roost[metrics]   # prometheus-client
+    pip install pgroost[otel]      # opentelemetry-api
+    pip install pgroost[metrics]   # prometheus-client
 """
 
 from __future__ import annotations

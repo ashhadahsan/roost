@@ -3,8 +3,10 @@
 ## Install
 
 ```bash
-pip install roost
+pip install pgroost
 ```
+
+> The PyPI distribution is `pgroost` (the bare `roost` name on PyPI is reserved). The import path stays `import roost` and the CLI command stays `roost`.
 
 ## Apply the schema
 

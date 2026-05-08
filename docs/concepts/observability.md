@@ -21,7 +21,7 @@ Example log line (JSON):
 ## Tracing — OpenTelemetry
 
 ```bash
-pip install roost[otel]
+pip install pgroost[otel]
 ```
 
 Once `opentelemetry-api` is importable, `enqueue` injects the active trace context into each job's `args` (under a private `__roost_trace` key the handler never sees), and the worker re-attaches it before invoking the handler. A span named `job:<task>` wraps every handler call with attributes for queue, task, attempt, and id.
@@ -31,7 +31,7 @@ If you've already configured an OTel SDK + exporter in your app, traces appear a
 ## Metrics — Prometheus
 
 ```bash
-pip install roost[metrics]
+pip install pgroost[metrics]
 ```
 
 Counters and a histogram are exposed under the standard `prometheus_client` registry:

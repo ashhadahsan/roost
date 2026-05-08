@@ -12,7 +12,7 @@
       }
     ]
   },
-  "description": "Roost — queue throughput, latency, and failure overview. Pair with the Prometheus extras: pip install roost[metrics].",
+  "description": "Roost — queue throughput, latency, and failure overview. Pair with the Prometheus extras: pip install pgroost[metrics].",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
