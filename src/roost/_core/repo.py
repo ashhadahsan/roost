@@ -82,6 +82,36 @@ SELECT j.id, false AS inserted
  LIMIT 1
 """
 
+_FETCH_AVAILABLE_FAST_PG = """
+WITH picked AS (
+    SELECT j.id
+      FROM roost.jobs j
+     WHERE j.state = 'available'
+       AND j.queue = ANY($1::text[])
+       AND j.scheduled_at <= now()
+       AND j.queue NOT IN (SELECT name FROM roost.queues WHERE paused_at IS NOT NULL)
+       AND (
+           cardinality(j.depends_on) = 0
+           OR NOT EXISTS (
+               SELECT 1 FROM roost.jobs p
+                WHERE p.id = ANY(j.depends_on)
+                  AND p.state <> 'completed'
+           )
+       )
+     ORDER BY j.priority ASC, j.scheduled_at ASC, j.id ASC
+     FOR UPDATE SKIP LOCKED
+     LIMIT $2
+)
+UPDATE roost.jobs j
+   SET state = 'executing',
+       attempt = attempt + 1,
+       attempted_at = now(),
+       metadata = j.metadata || jsonb_build_object('worker_id', $3::text)
+  FROM picked
+ WHERE j.id = picked.id
+RETURNING j.*
+"""
+
 _FETCH_AVAILABLE_PG = """
 WITH limits AS (
     SELECT t.task,
@@ -136,7 +166,8 @@ WITH limits AS (
 UPDATE roost.jobs j
    SET state = 'executing',
        attempt = attempt + 1,
-       attempted_at = now()
+       attempted_at = now(),
+       metadata = j.metadata || jsonb_build_object('worker_id', $6::text)
   FROM picked
  WHERE j.id = picked.id
 RETURNING j.*
@@ -546,21 +577,31 @@ async def fetch_available_async(
     limit: int,
     *,
     task_limits: dict[str, tuple[int | None, int | None]] | None = None,
+    worker_id: str = "",
 ) -> list[Job]:
     """Pick up to ``limit`` jobs from the listed queues and mark them ``executing``.
 
     ``task_limits`` is ``{task: (rate_per_minute, max_concurrency)}`` — pass
     ``None`` for either field to skip that gate. Tasks not in the mapping are
     unrestricted.
+
+    ``worker_id`` is stamped into ``metadata.worker_id`` of every claimed job
+    so the dashboard can show "what's running on which worker". Pass ``""``
+    to skip the tag (e.g. test helpers).
     """
+    if not task_limits:
+        # Fast path — no per-task throttling, skip the limits CTE + window-function ranking.
+        rows = await conn.fetch(_FETCH_AVAILABLE_FAST_PG, queues, limit, worker_id)
+        return [_record_to_job(r) for r in rows]
+
     tasks: list[str] = []
     rates: list[int | None] = []
     concs: list[int | None] = []
-    for task, (rate, conc) in (task_limits or {}).items():
+    for task, (rate, conc) in task_limits.items():
         tasks.append(task)
         rates.append(rate)
         concs.append(conc)
-    rows = await conn.fetch(_FETCH_AVAILABLE_PG, queues, limit, tasks, rates, concs)
+    rows = await conn.fetch(_FETCH_AVAILABLE_PG, queues, limit, tasks, rates, concs, worker_id)
     return [_record_to_job(r) for r in rows]
 
 
@@ -688,8 +729,117 @@ async def cron_try_lock_async(conn: asyncpg.Connection, key: int) -> bool:
     return bool(val)
 
 
+async def list_cron_runs_async(conn: asyncpg.Connection) -> list[dict[str, Any]]:
+    """Return the cron entries we've ever fired, with their last-run timestamps.
+
+    Joins to ``roost.jobs`` to count past invocations per entry — useful in
+    the dashboard to confirm a cron is actually firing.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT
+            cr.name,
+            cr.last_run_at,
+            (
+                SELECT COUNT(*) FROM roost.jobs j
+                 WHERE j.unique_key LIKE 'cron:' || cr.name || ':%'
+            ) AS run_count,
+            (
+                SELECT j.state FROM roost.jobs j
+                 WHERE j.unique_key LIKE 'cron:' || cr.name || ':%'
+                 ORDER BY j.id DESC LIMIT 1
+            ) AS last_state
+          FROM roost.cron_runs cr
+         ORDER BY cr.name
+        """
+    )
+    return [dict(r) for r in rows]
+
+
+async def list_jobs_for_worker_async(
+    conn: asyncpg.Connection, worker_id: str, limit: int = 20
+) -> list[dict[str, Any]]:
+    """Recent jobs that are/were running on the named worker.
+
+    Uses ``metadata->>'worker_id'`` if the worker was tagged, else falls back
+    to a count of currently-executing rows. The worker tags itself in
+    metadata when it picks a job up (see worker.py).
+    """
+    rows = await conn.fetch(
+        """
+        SELECT id, queue, task, state, attempt, max_attempts,
+               attempted_at, completed_at, errors
+          FROM roost.jobs
+         WHERE metadata->>'worker_id' = $1
+         ORDER BY id DESC
+         LIMIT $2
+        """,
+        worker_id,
+        limit,
+    )
+    return [dict(r) for r in rows]
+
+
+async def throughput_buckets_async(
+    conn: asyncpg.Connection, *, minutes: int = 60, bucket_seconds: int = 60
+) -> list[dict[str, Any]]:
+    """Counts of completed/discarded/cancelled jobs per ``bucket_seconds``-wide bucket.
+
+    Used for the overview sparkline. Returns one row per bucket between now
+    and ``now() - minutes minutes``, even if zero jobs landed in it.
+    """
+    rows = await conn.fetch(
+        """
+        WITH spans AS (
+            SELECT generate_series(
+                date_trunc('second', now()) - ($1::int * interval '1 minute'),
+                date_trunc('second', now()),
+                ($2::int * interval '1 second')
+            ) AS bucket_start
+        )
+        SELECT
+            s.bucket_start,
+            (SELECT COUNT(*) FROM roost.jobs j
+              WHERE j.completed_at >= s.bucket_start
+                AND j.completed_at <  s.bucket_start + ($2::int * interval '1 second')
+                AND j.state = 'completed') AS completed,
+            (SELECT COUNT(*) FROM roost.jobs j
+              WHERE j.discarded_at >= s.bucket_start
+                AND j.discarded_at <  s.bucket_start + ($2::int * interval '1 second')) AS discarded
+          FROM spans s
+         ORDER BY s.bucket_start
+        """,
+        minutes,
+        bucket_seconds,
+    )
+    return [dict(r) for r in rows]
+
+
 async def cron_unlock_async(conn: asyncpg.Connection, key: int) -> None:
     await conn.execute("SELECT pg_advisory_unlock($1)", key)
+
+
+async def clear_old_results_async(conn: asyncpg.Connection, *, older_than_seconds: float) -> int:
+    """Null out ``result`` for completed jobs older than the cutoff.
+
+    Useful as a privacy/space hygiene measure when handlers store sensitive
+    or large return values. The row stays — only ``result`` is cleared.
+    """
+    interval = timedelta(seconds=max(older_than_seconds, 0.0))
+    res = await conn.execute(
+        """
+        UPDATE roost.jobs
+           SET result = NULL
+         WHERE state = 'completed'
+           AND result IS NOT NULL
+           AND completed_at < now() - ($1::interval)
+        """,
+        interval,
+    )
+    try:
+        return int(res.rsplit(" ", 1)[-1])
+    except (ValueError, AttributeError):
+        return 0
 
 
 async def archive_terminal_async(conn: asyncpg.Connection, *, older_than_seconds: float) -> int:

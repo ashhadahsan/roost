@@ -88,6 +88,9 @@ select = [
     "SIM", # flake8-simplify
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"examples/**" = ["B008"]  # FastAPI's `= Depends(...)` is the canonical pattern
+
 [tool.mypy]
 python_version = "3.10"
 strict = true

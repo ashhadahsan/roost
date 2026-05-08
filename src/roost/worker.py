@@ -71,6 +71,7 @@ class Worker:
         error_cap: int = 20,
         archive_after_seconds: float | None = None,
         archive_interval: float = 60.0,
+        result_ttl_seconds: float | None = None,
         startup_max_retries: int = 30,
         startup_retry_delay: float = 1.0,
         hooks: Hooks | None = None,
@@ -95,6 +96,7 @@ class Worker:
         self.error_cap = max(1, int(error_cap))
         self.archive_after_seconds = archive_after_seconds
         self.archive_interval = archive_interval
+        self.result_ttl_seconds = result_ttl_seconds
         self.startup_max_retries = max(1, int(startup_max_retries))
         self.startup_retry_delay = startup_retry_delay
         self.hooks = hooks
@@ -119,7 +121,7 @@ class Worker:
             background.append(asyncio.create_task(self._cancel_listen_loop(), name="roost-cancel"))
             background.append(asyncio.create_task(self._heartbeat_loop(pool), name="roost-heartbeat"))
             background.append(asyncio.create_task(self._reaper_loop(pool), name="roost-reaper"))
-            if self.archive_after_seconds is not None:
+            if self.archive_after_seconds is not None or self.result_ttl_seconds is not None:
                 background.append(asyncio.create_task(self._archive_loop(pool), name="roost-archive"))
             if self.run_cron:
                 background.append(
@@ -199,7 +201,13 @@ class Worker:
         batch_size = min(self.prefetch, free_slots)
         task_limits = self._task_limits()
         async with pool.acquire() as conn, conn.transaction():
-            jobs = await repo.fetch_available_async(conn, self.queues, batch_size, task_limits=task_limits)
+            jobs = await repo.fetch_available_async(
+                conn,
+                self.queues,
+                batch_size,
+                task_limits=task_limits,
+                worker_id=self.id,
+            )
 
         for job in jobs:
             task = asyncio.create_task(self._dispatch(pool, job), name=f"roost-job-{job.id}")
@@ -513,17 +521,24 @@ class Worker:
         raise last_exc
 
     async def _archive_loop(self, pool: asyncpg.Pool) -> None:
-        """Periodically move terminal jobs older than ``archive_after_seconds`` out of ``roost.jobs``."""
-        if self.archive_after_seconds is None:
+        """Periodic terminal-job archive plus optional result-TTL clear."""
+        if self.archive_after_seconds is None and self.result_ttl_seconds is None:
             return
         while not self._stop.is_set():
             try:
                 async with pool.acquire() as conn:
-                    moved = await repo.archive_terminal_async(
-                        conn, older_than_seconds=self.archive_after_seconds
-                    )
-                if moved:
-                    _log.info("worker.archived", count=moved)
+                    if self.archive_after_seconds is not None:
+                        moved = await repo.archive_terminal_async(
+                            conn, older_than_seconds=self.archive_after_seconds
+                        )
+                        if moved:
+                            _log.info("worker.archived", count=moved)
+                    if self.result_ttl_seconds is not None:
+                        cleared = await repo.clear_old_results_async(
+                            conn, older_than_seconds=self.result_ttl_seconds
+                        )
+                        if cleared:
+                            _log.info("worker.results_cleared", count=cleared)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

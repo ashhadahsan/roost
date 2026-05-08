@@ -1,0 +1,83 @@
+# One-command stack: Postgres + worker + dashboard.
+#
+#   docker compose -f examples/docker/docker-compose.yml up
+#
+# Then open http://localhost:8000/ for the dashboard.
+# A small enqueue script runs once at startup and seeds 50 demo jobs
+# so the UI isn't empty.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: roost
+      POSTGRES_USER: roost
+      POSTGRES_PASSWORD: roost
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U roost -d roost"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    ports:
+      - "5432:5432"
+    volumes:
+      - roost_pgdata:/var/lib/postgresql/data
+
+  schema:
+    image: python:3.12-slim
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ROOST_DSN: postgresql://roost:roost@postgres:5432/roost
+    command: >
+      sh -c "pip install --quiet roost &&
+             roost init --apply"
+    restart: "no"
+
+  seed:
+    image: python:3.12-slim
+    depends_on:
+      schema:
+        condition: service_completed_successfully
+    environment:
+      ROOST_DSN: postgresql://roost:roost@postgres:5432/roost
+    volumes:
+      - ./seed.py:/seed.py:ro
+    command: >
+      sh -c "pip install --quiet roost && python /seed.py"
+    restart: "no"
+
+  worker:
+    image: python:3.12-slim
+    depends_on:
+      schema:
+        condition: service_completed_successfully
+    environment:
+      ROOST_DSN: postgresql://roost:roost@postgres:5432/roost
+      ROOST_LOG_JSON: "1"
+    volumes:
+      - ./tasks.py:/app/tasks.py:ro
+    working_dir: /app
+    command: >
+      sh -c "pip install --quiet roost &&
+             roost run --module tasks --queues default,emails,reports --concurrency 4"
+
+  dashboard:
+    image: python:3.12-slim
+    depends_on:
+      schema:
+        condition: service_completed_successfully
+    environment:
+      ROOST_DSN: postgresql://roost:roost@postgres:5432/roost
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./standalone.py:/app/standalone.py:ro
+    working_dir: /app
+    command: >
+      sh -c "pip install --quiet roost roost-web uvicorn &&
+             uvicorn standalone:app --host 0.0.0.0 --port 8000"
+
+volumes:
+  roost_pgdata:
