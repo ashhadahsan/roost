@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-08
+
+Patch release. No runtime code changes — docs + site cleanup only.
+
+### Fixed
+
+- **Read the Docs build** — `docs/conf.py` enables MyST's `linkify` extension, which needs `linkify-it-py`. That package was missing from the `[docs]` extra so RTD's first build crashed with `ModuleNotFoundError: Linkify enabled but not installed.` The extra now declares `myst-parser[linkify]>=4.0.1`.
+- **README license badge** — was pointing at `pypi/l/roost.svg` (renders as "package or version not found" since the dist is `pgroost`). Now points at `pypi/l/pgroost.svg`.
+
+### Changed
+
+- **Docs URL** — moved from `roost.readthedocs.io` to `pgroost.readthedocs.io` to match the PyPI distribution. Updated README badge, README links, `pyproject.toml` `Documentation` URL, `docs/conf.py` `pkg_version("pgroost")`, and TASKS.md targets.
+- **Marketing site canonical URL** — `roost-site` was hardcoding `https://roost.dev` in `astro.config.mjs`, which leaked into Open Graph + canonical tags even though the site deploys at `roost.ashhadahsan.com`. The README's `recipes` and `comparison` links also pointed at the unowned domain. All now point at `roost.ashhadahsan.com`.
+
 ## [0.1.0] - 2026-05-08
 
 First public release.
@@ -72,5 +86,6 @@ First public release.
 - Sphinx + Furo documentation site with quickstart, concepts, and recipes.
 - Community files: SECURITY.md, CODE_OF_CONDUCT.md, GitHub issue + PR templates, Dependabot config.
 
-[Unreleased]: https://github.com/ashhadahsan/roost/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ashhadahsan/roost/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/ashhadahsan/roost/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ashhadahsan/roost/releases/tag/v0.1.0
