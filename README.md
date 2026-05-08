@@ -14,6 +14,8 @@
   <a href="https://pypi.org/project/roost/"><img src="https://img.shields.io/pypi/pyversions/roost.svg" alt="Python versions"/></a>
   <a href="https://github.com/ashhadahsan/roost/actions/workflows/ci.yml"><img src="https://github.com/ashhadahsan/roost/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
   <a href="https://roost.readthedocs.io/"><img src="https://readthedocs.org/projects/roost/badge/?version=latest" alt="Docs"/></a>
+  <img src="https://img.shields.io/badge/coverage-86%25-brightgreen.svg" alt="Coverage 86%"/>
+  <img src="https://img.shields.io/badge/tests-163%20passing-brightgreen.svg" alt="163 tests"/>
   <a href="LICENSE"><img src="https://img.shields.io/pypi/l/roost.svg" alt="MIT"/></a>
 </p>
 
@@ -108,6 +110,31 @@ Read the [docs](https://roost.readthedocs.io/) and the [recipes](https://roost.d
 - **PostgreSQL:** 13, 14, 15, 16. Tested every commit on the full matrix.
 - **Drivers:** `asyncpg` (async), `psycopg[binary]` (sync).
 - **Hosts:** any ASGI app — FastAPI, Starlette, Litestar, Quart. Django and Flask via the contrib helpers.
+
+## Test suite
+
+- **163 tests, 86% coverage**, real Postgres via `testcontainers` (no mocks of the DB layer).
+- Run locally: `uv run pytest -q`. With coverage: `uv run --with pytest-cov pytest --cov=src/roost --cov-report=term`.
+- Override the test image: `ROOST_TEST_PG_IMAGE=postgres:15-alpine uv run pytest -q`.
+
+| Module                     | Coverage |
+| -------------------------- | -------- |
+| `roost.sync_api`           | 100%     |
+| `roost._core.retry`        | 100%     |
+| `roost.exceptions`         | 100%     |
+| `roost.contrib.flask`      | 100%     |
+| `roost.testing`            | 98%      |
+| `roost.contrib.django`     | 96%      |
+| `roost._core.wait`         | 95%      |
+| `roost.hooks`              | 92%      |
+| `roost._core.migrations`   | 91%      |
+| `roost._core.repo`         | 88%      |
+| `roost.observability`      | 85%      |
+| `roost._core.doctor`       | 84%      |
+| `roost.async_api`          | 83%      |
+| `roost.cli`, `worker.py`   | 82%      |
+| `roost.decorators`         | 81%      |
+| `roost._core.cron`         | 80%      |
 
 ## Compared to other queues
 
