@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`roost requeue --discarded --queue X`** — bulk dead-letter revive scoped to one queue.
 - **Event hooks** — `Hooks(before_job, after_job)` plug into every dispatch with a shared per-execution `ctx` dict; throwing hooks never poison the handler.
 - **`roost tasks export`** — emit a JSON manifest of registered tasks plus their Pydantic-derived JSON Schemas, useful for typed clients.
-- **`roost run --reload`** — dev mode that watches imported handler modules and exits cleanly so a supervisor can restart. Requires `pip install roost[reload]`.
+- **`roost run --reload`** — dev mode that watches imported handler modules and exits cleanly so a supervisor can restart. Requires `pip install pgroost[reload]`.
 
 ### Initial release
 
@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Public facades `AsyncRoost` (asyncpg) and `Roost` (psycopg).
 - **Operational primitives:** queue pause/resume, worker heartbeat table, orphan reaper, mass-requeue of discarded jobs.
 - Typer CLI: `init`, `run`, `status`, `retry`, `cancel`, `workers`, `requeue --discarded`, `queue pause|resume|list`, `version`.
-- **Observability:** structlog defaults (JSON in prod, pretty in dev), optional OpenTelemetry trace propagation (`pip install roost[otel]`), optional Prometheus metrics (`pip install roost[metrics]`).
+- **Observability:** structlog defaults (JSON in prod, pretty in dev), optional OpenTelemetry trace propagation (`pip install pgroost[otel]`), optional Prometheus metrics (`pip install pgroost[metrics]`).
 - **Bench harness** (`bench/throughput.py`) measuring throughput + p50/p99 enqueue→start latency.
 - **Chaos test** verifying SIGKILL'd worker jobs are recovered by the orphan reaper.
 - testcontainers-based test suite covering enqueue atomicity, retries, cron, listen/notify, unique jobs, hardening, and feature surfaces (50+ tests).

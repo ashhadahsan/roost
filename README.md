@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/roost/"><img src="https://img.shields.io/pypi/v/roost.svg" alt="PyPI"/></a>
-  <a href="https://pypi.org/project/roost/"><img src="https://img.shields.io/pypi/pyversions/roost.svg" alt="Python versions"/></a>
+  <a href="https://pypi.org/project/pgroost/"><img src="https://img.shields.io/pypi/v/pgroost.svg" alt="PyPI"/></a>
+  <a href="https://pypi.org/project/pgroost/"><img src="https://img.shields.io/pypi/pyversions/pgroost.svg" alt="Python versions"/></a>
   <a href="https://github.com/ashhadahsan/roost/actions/workflows/ci.yml"><img src="https://github.com/ashhadahsan/roost/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
   <a href="https://roost.readthedocs.io/"><img src="https://readthedocs.org/projects/roost/badge/?version=latest" alt="Docs"/></a>
   <img src="https://img.shields.io/badge/coverage-86%25-brightgreen.svg" alt="Coverage 86%"/>
@@ -45,10 +45,12 @@ Run `bench/throughput.py` against your own Postgres to see what you get.
 ## Quickstart
 
 ```bash
-pip install roost
+pip install pgroost                # install
 export ROOST_DSN=postgresql://user:pass@localhost/app
-roost init --apply
+roost init --apply                 # CLI command stays `roost`
 ```
+
+> **Distribution vs import name:** the PyPI distribution is `pgroost` (the bare `roost` name is taken on PyPI). You still `import roost` and call the `roost` CLI — only the install line differs.
 
 ```python
 # tasks.py
