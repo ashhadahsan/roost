@@ -146,6 +146,47 @@ class Worker:
             await pool.close()
             _log.info("worker.stopped", id=self.id)
 
+    async def run_once(self) -> int:
+        """Drain every currently-available job and exit. Returns count processed.
+
+        Skips the cron scheduler, archive loop, and orphan reaper — this is
+        intended for one-shot invocations (CI smokes, cron-style runs of
+        ``roost run --once``, programmatic test helpers).
+
+        Heartbeats and the listen connection still come up briefly; the
+        worker still claims rows via ``FOR UPDATE SKIP LOCKED`` so it's
+        safe to run alongside other workers.
+        """
+        pool = await self._open_pool_with_retry()
+        processed = 0
+        try:
+            async with pool.acquire() as conn:
+                await repo.heartbeat_async(
+                    conn,
+                    worker_id=self.id,
+                    hostname=socket.gethostname(),
+                    pid=os.getpid(),
+                    queues=self.queues,
+                    metadata={"mode": "once", "concurrency": self.concurrency},
+                )
+
+            while True:
+                await self._promote_retryable(pool)
+                picked = await self._fetch_batch(pool)
+                if picked == 0:
+                    break
+                processed += picked
+                # Wait for the inflight tasks from this batch before checking again.
+                if self._inflight:
+                    await asyncio.gather(*self._inflight, return_exceptions=True)
+        finally:
+            with contextlib.suppress(Exception):
+                async with pool.acquire() as conn:
+                    await repo.deregister_worker_async(conn, self.id)
+            await pool.close()
+            _log.info("worker.run_once.done", processed=processed, id=self.id)
+        return processed
+
     def request_stop(self) -> None:
         self._stop.set()
         self._wakeup.set()

@@ -32,16 +32,29 @@ _ENQUEUE_BASE_COLS = (
     "unique_key, tags, timeout_seconds, depends_on, metadata"
 )
 
+# scheduled_at defaults to server-side now() when caller passes NULL. We
+# avoid Python-side ``datetime.now()`` for the default to dodge clock drift
+# between the client host and the Postgres server (Docker testcontainers,
+# k8s pods, etc.) which can leave newly enqueued rows briefly invisible to
+# ``WHERE scheduled_at <= now()``.
 _INSERT_PLAIN_PG = f"""
 INSERT INTO roost.jobs ({_ENQUEUE_BASE_COLS})
-VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8::text[], $9, $10::bigint[], $11::jsonb)
+VALUES (
+    $1, $2::jsonb, $3, $4, $5,
+    COALESCE($6::timestamptz, now()),
+    $7, $8::text[], $9, $10::bigint[], $11::jsonb
+)
 RETURNING id
 """
 
 _INSERT_UNIQUE_PG = f"""
 WITH attempted AS (
     INSERT INTO roost.jobs ({_ENQUEUE_BASE_COLS})
-    VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8::text[], $9, $10::bigint[], $11::jsonb)
+    VALUES (
+        $1, $2::jsonb, $3, $4, $5,
+        COALESCE($6::timestamptz, now()),
+        $7, $8::text[], $9, $10::bigint[], $11::jsonb
+    )
     ON CONFLICT (unique_key)
       WHERE unique_key IS NOT NULL AND state IN ('available','executing','retryable')
     DO NOTHING
@@ -59,14 +72,22 @@ SELECT j.id, false AS inserted
 
 _INSERT_PLAIN_PSY = f"""
 INSERT INTO roost.jobs ({_ENQUEUE_BASE_COLS})
-VALUES (%s, %s::jsonb, %s, %s, %s, %s, %s, %s::text[], %s, %s::bigint[], %s::jsonb)
+VALUES (
+    %s, %s::jsonb, %s, %s, %s,
+    COALESCE(%s::timestamptz, now()),
+    %s, %s::text[], %s, %s::bigint[], %s::jsonb
+)
 RETURNING id
 """
 
 _INSERT_UNIQUE_PSY = f"""
 WITH attempted AS (
     INSERT INTO roost.jobs ({_ENQUEUE_BASE_COLS})
-    VALUES (%s, %s::jsonb, %s, %s, %s, %s, %s, %s::text[], %s, %s::bigint[], %s::jsonb)
+    VALUES (
+        %s, %s::jsonb, %s, %s, %s,
+        COALESCE(%s::timestamptz, now()),
+        %s, %s::text[], %s, %s::bigint[], %s::jsonb
+    )
     ON CONFLICT (unique_key)
       WHERE unique_key IS NOT NULL AND state IN ('available','executing','retryable')
     DO NOTHING
@@ -82,37 +103,27 @@ SELECT j.id, false AS inserted
  LIMIT 1
 """
 
-_FETCH_AVAILABLE_FAST_PG = """
-WITH picked AS (
-    SELECT j.id
-      FROM roost.jobs j
-     WHERE j.state = 'available'
-       AND j.queue = ANY($1::text[])
-       AND j.scheduled_at <= now()
-       AND j.queue NOT IN (SELECT name FROM roost.queues WHERE paused_at IS NOT NULL)
-       AND (
-           cardinality(j.depends_on) = 0
-           OR NOT EXISTS (
-               SELECT 1 FROM roost.jobs p
-                WHERE p.id = ANY(j.depends_on)
-                  AND p.state <> 'completed'
-           )
+_PICK_AVAILABLE_FAST_PG = """
+SELECT j.id
+  FROM roost.jobs j
+ WHERE j.state = 'available'
+   AND j.queue = ANY($1::text[])
+   AND j.scheduled_at <= now()
+   AND j.queue NOT IN (SELECT name FROM roost.queues WHERE paused_at IS NOT NULL)
+   AND (
+       cardinality(j.depends_on) = 0
+       OR NOT EXISTS (
+           SELECT 1 FROM roost.jobs p
+            WHERE p.id = ANY(j.depends_on)
+              AND p.state <> 'completed'
        )
-     ORDER BY j.priority ASC, j.scheduled_at ASC, j.id ASC
-     FOR UPDATE SKIP LOCKED
-     LIMIT $2
-)
-UPDATE roost.jobs j
-   SET state = 'executing',
-       attempt = attempt + 1,
-       attempted_at = now(),
-       metadata = j.metadata || jsonb_build_object('worker_id', $3::text)
-  FROM picked
- WHERE j.id = picked.id
-RETURNING j.*
+   )
+ ORDER BY j.priority ASC, j.scheduled_at ASC, j.id ASC
+ FOR UPDATE SKIP LOCKED
+ LIMIT $2
 """
 
-_FETCH_AVAILABLE_PG = """
+_PICK_AVAILABLE_THROTTLED_PG = """
 WITH limits AS (
     SELECT t.task,
            t.rate_per_minute,
@@ -154,23 +165,31 @@ WITH limits AS (
       FROM ranked
      WHERE (max_concurrency IS NULL OR exec_now + rn_task <= max_concurrency)
        AND (rate_per_minute IS NULL OR rate_now + rn_task <= rate_per_minute)
-), picked AS (
-    SELECT j.id
-      FROM roost.jobs j
-      JOIN allowed a ON a.id = j.id
-     WHERE j.state = 'available'
-     ORDER BY j.priority ASC, j.scheduled_at ASC, j.id ASC
-     FOR UPDATE SKIP LOCKED
-     LIMIT $2
 )
-UPDATE roost.jobs j
+SELECT j.id
+  FROM roost.jobs j
+  JOIN allowed a ON a.id = j.id
+ WHERE j.state = 'available'
+ ORDER BY j.priority ASC, j.scheduled_at ASC, j.id ASC
+ FOR UPDATE SKIP LOCKED
+ LIMIT $2
+"""
+
+# Two-step claim: pick ids with FOR UPDATE SKIP LOCKED, then UPDATE by ids.
+# Splitting SELECT from UPDATE keeps the contention surface tiny — the
+# UPDATE no longer scans the queue, just hits the picked ids. The locks
+# taken by FOR UPDATE are held by the outer transaction until we commit,
+# so the UPDATE is race-safe.
+_CLAIM_BY_IDS_PG = """
+UPDATE roost.jobs
    SET state = 'executing',
        attempt = attempt + 1,
        attempted_at = now(),
-       metadata = j.metadata || jsonb_build_object('worker_id', $6::text)
-  FROM picked
- WHERE j.id = picked.id
-RETURNING j.*
+       metadata = CASE WHEN $2 = '' THEN metadata
+                       ELSE metadata || jsonb_build_object('worker_id', $2::text)
+                  END
+ WHERE id = ANY($1::bigint[])
+RETURNING *
 """
 
 _MARK_COMPLETED_PG = """
@@ -347,7 +366,11 @@ UPDATE roost.jobs
 
 _BULK_INSERT_PG = f"""
 INSERT INTO roost.jobs ({_ENQUEUE_BASE_COLS})
-VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8::text[], $9, $10::bigint[], $11::jsonb)
+VALUES (
+    $1, $2::jsonb, $3, $4, $5,
+    COALESCE($6::timestamptz, now()),
+    $7, $8::text[], $9, $10::bigint[], $11::jsonb
+)
 ON CONFLICT (unique_key)
   WHERE unique_key IS NOT NULL AND state IN ('available','executing','retryable')
 DO NOTHING
@@ -406,9 +429,9 @@ def _utcnow() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-def _coerce_scheduled_at(scheduled_at: datetime | None) -> datetime:
+def _coerce_scheduled_at(scheduled_at: datetime | None) -> datetime | None:
     if scheduled_at is None:
-        return _utcnow()
+        return None
     if scheduled_at.tzinfo is None:
         return scheduled_at.replace(tzinfo=timezone.utc)
     return scheduled_at
@@ -438,6 +461,7 @@ async def init_connection(conn: asyncpg.Connection) -> None:
 
     Call this on every asyncpg connection used to fetch from ``roost.jobs``,
     or pass it as ``init=`` when constructing a :class:`asyncpg.Pool`.
+
     """
     await conn.set_type_codec(
         "jsonb",
@@ -589,19 +613,31 @@ async def fetch_available_async(
     so the dashboard can show "what's running on which worker". Pass ``""``
     to skip the tag (e.g. test helpers).
     """
-    if not task_limits:
-        # Fast path — no per-task throttling, skip the limits CTE + window-function ranking.
-        rows = await conn.fetch(_FETCH_AVAILABLE_FAST_PG, queues, limit, worker_id)
-        return [_record_to_job(r) for r in rows]
+    # Two-step claim inside a transaction so the FOR UPDATE locks survive
+    # until we run the UPDATE. We split SELECT + UPDATE because asyncpg on
+    # PG 15/16-alpine can silently drop rows from multi-row RETURNING in a
+    # modifying CTE.
+    async with conn.transaction():
+        if not task_limits:
+            picked = await conn.fetch(_PICK_AVAILABLE_FAST_PG, queues, limit)
+        else:
+            tasks_a: list[str] = []
+            rates: list[int | None] = []
+            concs: list[int | None] = []
+            for task, (rate, conc) in task_limits.items():
+                tasks_a.append(task)
+                rates.append(rate)
+                concs.append(conc)
+            picked = await conn.fetch(
+                _PICK_AVAILABLE_THROTTLED_PG, queues, limit, tasks_a, rates, concs
+            )
 
-    tasks: list[str] = []
-    rates: list[int | None] = []
-    concs: list[int | None] = []
-    for task, (rate, conc) in task_limits.items():
-        tasks.append(task)
-        rates.append(rate)
-        concs.append(conc)
-    rows = await conn.fetch(_FETCH_AVAILABLE_PG, queues, limit, tasks, rates, concs, worker_id)
+        if not picked:
+            return []
+
+        ids = [int(r["id"]) for r in picked]
+        rows = await conn.fetch(_CLAIM_BY_IDS_PG, ids, worker_id or "")
+
     return [_record_to_job(r) for r in rows]
 
 
@@ -727,6 +763,74 @@ async def requeue_discarded_async(conn: asyncpg.Connection) -> int:
 async def cron_try_lock_async(conn: asyncpg.Connection, key: int) -> bool:
     val = await conn.fetchval("SELECT pg_try_advisory_lock($1)", key)
     return bool(val)
+
+
+async def explain_job_async(conn: asyncpg.Connection, job_id: int) -> dict[str, Any]:
+    """Diagnose why a job hasn't started yet.
+
+    Returns a dict with the gates Roost evaluates at fetch time, each
+    annotated with whether it currently blocks the job. The dashboard's
+    "why is this stuck?" panel renders this; programmatic callers can
+    use it to surface helpful error messages.
+
+    Keys:
+        ``state`` — current job state (only ``available`` jobs are
+        meaningfully diagnosable; others get ``state_terminal=True``).
+        ``scheduled_in_future`` — true if ``scheduled_at > now()``.
+        ``queue_paused`` — true if the queue has a row in ``roost.queues``
+        with ``paused_at IS NOT NULL``.
+        ``waiting_on_parents`` — list of parent ids that haven't completed.
+        ``rate_limited`` / ``concurrency_limited`` — set when the worker's
+        registry includes per-task limits and the current count meets them.
+        Note: this helper doesn't know the registry, so it returns the
+        raw counts; callers join in the limits.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT
+            j.id, j.task, j.queue, j.state, j.scheduled_at, j.depends_on,
+            (j.scheduled_at > now()) AS scheduled_in_future,
+            EXISTS(
+                SELECT 1 FROM roost.queues q
+                 WHERE q.name = j.queue AND q.paused_at IS NOT NULL
+            ) AS queue_paused,
+            (
+                SELECT COALESCE(array_agg(p.id ORDER BY p.id), ARRAY[]::bigint[])
+                  FROM roost.jobs p
+                 WHERE p.id = ANY(j.depends_on)
+                   AND p.state <> 'completed'
+            ) AS waiting_on_parents,
+            (
+                SELECT COUNT(*) FROM roost.jobs jt
+                 WHERE jt.task = j.task AND jt.state = 'executing'
+            ) AS executing_count,
+            (
+                SELECT COUNT(*) FROM roost.jobs jt
+                 WHERE jt.task = j.task
+                   AND jt.attempted_at >= now() - interval '1 minute'
+            ) AS attempted_last_minute
+          FROM roost.jobs j
+         WHERE j.id = $1
+        """,
+        job_id,
+    )
+    if row is None:
+        return {"found": False}
+    waiting = list(row["waiting_on_parents"] or [])
+    return {
+        "found": True,
+        "id": int(row["id"]),
+        "task": row["task"],
+        "queue": row["queue"],
+        "state": row["state"],
+        "state_terminal": row["state"] in {"completed", "discarded", "cancelled"},
+        "scheduled_at": row["scheduled_at"],
+        "scheduled_in_future": bool(row["scheduled_in_future"]),
+        "queue_paused": bool(row["queue_paused"]),
+        "waiting_on_parents": [int(p) for p in waiting],
+        "executing_count": int(row["executing_count"]),
+        "attempted_last_minute": int(row["attempted_last_minute"]),
+    }
 
 
 async def list_cron_runs_async(conn: asyncpg.Connection) -> list[dict[str, Any]]:

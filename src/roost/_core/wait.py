@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from roost._core.notify import CHANNEL_UPDATED
 from roost._core.repo import init_connection
@@ -22,9 +22,13 @@ if TYPE_CHECKING:  # pragma: no cover
 class JobTimeoutError(TimeoutError):
     """Raised when ``wait_for_async`` exceeds its timeout."""
 
+    code: ClassVar[str] = "roost.job-timeout"
+
 
 class JobFailed(RuntimeError):
     """Raised when the awaited job ended in ``discarded`` or ``cancelled``."""
+
+    code: ClassVar[str] = "roost.job-failed"
 
     def __init__(self, job_id: int, state: str, errors: list[dict[str, Any]] | None = None):
         self.job_id = job_id

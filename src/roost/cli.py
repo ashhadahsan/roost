@@ -47,6 +47,51 @@ def version() -> None:
     typer.echo(__version__)
 
 
+@app.command()
+def doctor(
+    dsn: Annotated[str | None, typer.Option(help="Postgres DSN (or set ROOST_DSN).")] = None,
+    worker_stale_after: Annotated[
+        float,
+        typer.Option(help="Treat worker heartbeats older than this (seconds) as stale."),
+    ] = 60.0,
+) -> None:
+    """Run a one-shot health check against the database.
+
+    Reports on: migration status, NOTIFY trigger presence, recent worker
+    heartbeats, and a job-state summary. Returns exit code 0 if every
+    check passes, 1 if any check fails.
+    """
+    import asyncio as _asyncio
+
+    import asyncpg
+
+    from roost._core.doctor import run_checks_async
+    from roost._core.repo import init_connection
+
+    target = _resolve_dsn(dsn)
+
+    async def _go() -> int:
+        conn = await asyncpg.connect(target)
+        try:
+            await init_connection(conn)
+            results = await run_checks_async(conn, worker_stale_after_seconds=worker_stale_after)
+        finally:
+            await conn.close()
+        bad = 0
+        for c in results:
+            color = typer.colors.GREEN if c.ok else typer.colors.RED
+            typer.secho(c.render(), fg=color)
+            if not c.ok:
+                bad += 1
+        return bad
+
+    failures = _asyncio.run(_go())
+    if failures:
+        typer.secho(f"\n{failures} check(s) failed", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+    typer.secho("\nall checks passed", fg=typer.colors.GREEN)
+
+
 migrate_app = typer.Typer(name="migrate", help="Schema migrations.", no_args_is_help=True)
 app.add_typer(migrate_app)
 
@@ -201,6 +246,23 @@ def run(
             help="Dev mode: watch handler modules and exit on change so the supervisor restarts.",
         ),
     ] = False,
+    once: Annotated[
+        bool,
+        typer.Option(
+            "--once",
+            help="Drain all currently-available jobs and exit. Skips cron + archive loops.",
+        ),
+    ] = False,
+    workers: Annotated[
+        int,
+        typer.Option(
+            "--workers",
+            help=(
+                "Number of OS processes. Default 1 = single asyncio worker. "
+                "Each process runs `concurrency` in-flight jobs."
+            ),
+        ),
+    ] = 1,
     dsn: Annotated[str | None, typer.Option(help="Postgres DSN (or set ROOST_DSN).")] = None,
 ) -> None:
     """Run a worker."""
@@ -210,8 +272,36 @@ def run(
     queue_list = [q.strip() for q in queues.split(",") if q.strip()]
     if not queue_list:
         raise typer.BadParameter("at least one queue is required")
+    if workers < 1:
+        raise typer.BadParameter("--workers must be >= 1")
+    if workers > 1 and once:
+        raise typer.BadParameter("--once is incompatible with --workers > 1")
+    if workers > 1 and reload:
+        raise typer.BadParameter("--reload is incompatible with --workers > 1")
 
     _import_modules(list(module or []))
+
+    if workers > 1:
+        from roost._core.supervisor import run_workers
+
+        worker_kwargs: dict[str, Any] = dict(
+            concurrency=concurrency,
+            prefetch=prefetch,
+            poll_interval=poll_interval,
+            run_cron=not no_cron,
+        )
+        typer.secho(
+            f"roost supervisor: {workers} workers × concurrency={concurrency} on {queue_list}",
+            fg=typer.colors.CYAN,
+        )
+        rc = run_workers(
+            target,
+            n=workers,
+            queues=queue_list,
+            modules=list(module or []),
+            worker_kwargs=worker_kwargs,
+        )
+        raise typer.Exit(code=rc)
 
     worker = Worker(
         target,
@@ -222,7 +312,7 @@ def run(
         run_cron=not no_cron,
     )
 
-    async def _main() -> None:
+    async def _main_long_lived() -> None:
         loop = asyncio.get_running_loop()
         worker.install_signal_handlers(loop)
         watcher: asyncio.Task[None] | None = None
@@ -234,8 +324,13 @@ def run(
             if watcher is not None:
                 watcher.cancel()
 
+    async def _main_once() -> None:
+        processed = await worker.run_once()
+        typer.secho(f"  drained {processed} job(s) and exiting", fg=typer.colors.GREEN)
+
     typer.secho(
-        f"roost worker queues={queue_list} concurrency={concurrency} dsn={target}",
+        f"roost worker queues={queue_list} concurrency={concurrency} dsn={target}"
+        + (" (one-shot)" if once else ""),
         fg=typer.colors.CYAN,
     )
     if reload:
@@ -244,7 +339,7 @@ def run(
             "your supervisor (uvicorn-style) is responsible for restart.",
             fg=typer.colors.YELLOW,
         )
-    asyncio.run(_main())
+    asyncio.run(_main_once() if once else _main_long_lived())
 
 
 def _start_reload_watcher(worker: Worker, modules: list[str]) -> asyncio.Task[None]:

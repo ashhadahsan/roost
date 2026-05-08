@@ -70,6 +70,16 @@ class HandlerRegistry:
     def get(self, name: str) -> HandlerSpec | None:
         return self._handlers.get(name)
 
+    def specs(self) -> list[HandlerSpec]:
+        """Return every registered :class:`HandlerSpec`, sorted by name.
+
+        Useful for building admin UIs or generating manifests::
+
+            for spec in roost_handlers.specs():
+                print(spec.name, spec.defaults.queue, spec.args_model)
+        """
+        return [self._handlers[name] for name in sorted(self._handlers)]
+
     def names(self) -> list[str]:
         return sorted(self._handlers)
 
