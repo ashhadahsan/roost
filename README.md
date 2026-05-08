@@ -16,7 +16,7 @@
   <a href="https://roost.readthedocs.io/"><img src="https://readthedocs.org/projects/roost/badge/?version=latest" alt="Docs"/></a>
   <img src="https://img.shields.io/badge/coverage-86%25-brightgreen.svg" alt="Coverage 86%"/>
   <img src="https://img.shields.io/badge/tests-163%20passing-brightgreen.svg" alt="163 tests"/>
-  <a href="LICENSE"><img src="https://img.shields.io/pypi/l/roost.svg" alt="MIT"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/pypi/l/pgroost.svg" alt="MIT"/></a>
 </p>
 
 > 🚧 **Alpha** — under active development. APIs may change before `1.0`. Pin exactly.
