@@ -345,7 +345,7 @@ def run(
 def _start_reload_watcher(worker: Worker, modules: list[str]) -> asyncio.Task[None]:
     """Watch the source files of imported handler modules; on change, request shutdown."""
     try:
-        from watchfiles import awatch  # type: ignore[import-not-found]
+        from watchfiles import awatch
     except ImportError:
         typer.secho(
             "  --reload requires the optional `watchfiles` package: pip install watchfiles",
