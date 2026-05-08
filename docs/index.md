@@ -3,7 +3,7 @@
 > Postgres-backed background job queue for Python — Oban for Pythonistas.
 
 ```{warning}
-Roost is in **alpha**. APIs may break before `v0.1.0`. Pin exactly.
+Roost is in **alpha**. APIs may break before `1.0`. Pin exactly.
 ```
 
 ## Why Roost?
