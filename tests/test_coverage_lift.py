@@ -108,23 +108,17 @@ def test_cli_enqueue_command(fresh_dsn: str) -> None:
 
 
 def test_cli_enqueue_invalid_json(fresh_dsn: str) -> None:
-    result = runner.invoke(
-        app, ["enqueue", "x", "--args", "{not json", "--dsn", fresh_dsn]
-    )
+    result = runner.invoke(app, ["enqueue", "x", "--args", "{not json", "--dsn", fresh_dsn])
     assert result.exit_code != 0
 
 
 def test_cli_enqueue_args_must_be_object(fresh_dsn: str) -> None:
-    result = runner.invoke(
-        app, ["enqueue", "x", "--args", "[1,2]", "--dsn", fresh_dsn]
-    )
+    result = runner.invoke(app, ["enqueue", "x", "--args", "[1,2]", "--dsn", fresh_dsn])
     assert result.exit_code != 0
 
 
 def test_cli_enqueue_with_in_seconds(fresh_dsn: str) -> None:
-    result = runner.invoke(
-        app, ["enqueue", "delayed", "--in", "30", "--dsn", fresh_dsn]
-    )
+    result = runner.invoke(app, ["enqueue", "delayed", "--in", "30", "--dsn", fresh_dsn])
     assert result.exit_code == 0
 
 
@@ -145,9 +139,7 @@ def test_cli_retry_then_cancel_real_job(fresh_dsn: str) -> None:
     job_id = r.enqueue("retry_target")
     # Mark discarded so retry has work to do.
     with psycopg.connect(fresh_dsn) as conn, conn.cursor() as cur:
-        cur.execute(
-            "UPDATE roost.jobs SET state = 'discarded' WHERE id = %s", (job_id,)
-        )
+        cur.execute("UPDATE roost.jobs SET state = 'discarded' WHERE id = %s", (job_id,))
         conn.commit()
     result = runner.invoke(app, ["retry", str(job_id), "--dsn", fresh_dsn])
     assert result.exit_code == 0
@@ -204,9 +196,7 @@ def test_cli_requeue_discarded(fresh_dsn: str) -> None:
     r = Roost(fresh_dsn)
     job_id = r.enqueue("dead_letter")
     with psycopg.connect(fresh_dsn) as conn, conn.cursor() as cur:
-        cur.execute(
-            "UPDATE roost.jobs SET state = 'discarded' WHERE id = %s", (job_id,)
-        )
+        cur.execute("UPDATE roost.jobs SET state = 'discarded' WHERE id = %s", (job_id,))
         conn.commit()
     result = runner.invoke(app, ["requeue", "--discarded", "--dsn", fresh_dsn])
     assert result.exit_code == 0
@@ -225,38 +215,28 @@ def test_cli_requeue_discarded_per_queue(fresh_dsn: str) -> None:
             ([a, b],),
         )
         conn.commit()
-    result = runner.invoke(
-        app, ["requeue", "--discarded", "--queue", "aq", "--dsn", fresh_dsn]
-    )
+    result = runner.invoke(app, ["requeue", "--discarded", "--queue", "aq", "--dsn", fresh_dsn])
     assert result.exit_code == 0
     assert "requeued 1" in result.stdout
 
 
 def test_cli_run_invalid_workers_value(fresh_dsn: str) -> None:
-    result = runner.invoke(
-        app, ["run", "--workers", "0", "--dsn", fresh_dsn]
-    )
+    result = runner.invoke(app, ["run", "--workers", "0", "--dsn", fresh_dsn])
     assert result.exit_code != 0
 
 
 def test_cli_run_once_with_workers_n_errors(fresh_dsn: str) -> None:
-    result = runner.invoke(
-        app, ["run", "--once", "--workers", "2", "--dsn", fresh_dsn]
-    )
+    result = runner.invoke(app, ["run", "--once", "--workers", "2", "--dsn", fresh_dsn])
     assert result.exit_code != 0
 
 
 def test_cli_run_reload_with_workers_n_errors(fresh_dsn: str) -> None:
-    result = runner.invoke(
-        app, ["run", "--reload", "--workers", "2", "--dsn", fresh_dsn]
-    )
+    result = runner.invoke(app, ["run", "--reload", "--workers", "2", "--dsn", fresh_dsn])
     assert result.exit_code != 0
 
 
 def test_cli_run_empty_queues_errors(fresh_dsn: str) -> None:
-    result = runner.invoke(
-        app, ["run", "--queues", ",,", "--dsn", fresh_dsn]
-    )
+    result = runner.invoke(app, ["run", "--queues", ",,", "--dsn", fresh_dsn])
     assert result.exit_code != 0
 
 
@@ -326,9 +306,7 @@ def test_sync_api_admin_methods(fresh_dsn: str) -> None:
     assert n == 0
 
 
-def test_sync_api_enqueue_rolls_back_on_repo_failure(
-    fresh_dsn: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sync_api_enqueue_rolls_back_on_repo_failure(fresh_dsn: str, monkeypatch: pytest.MonkeyPatch) -> None:
     from roost import Roost
 
     def boom(*a: Any, **kw: Any) -> None:
@@ -393,9 +371,7 @@ async def test_doctor_reports_jobs_summary_with_executing(
 async def test_doctor_reports_missing_triggers(
     fresh_async_conn: asyncpg.Connection,
 ) -> None:
-    await fresh_async_conn.execute(
-        "DROP TRIGGER IF EXISTS jobs_notify_inserted ON roost.jobs"
-    )
+    await fresh_async_conn.execute("DROP TRIGGER IF EXISTS jobs_notify_inserted ON roost.jobs")
     results = await run_checks_async(fresh_async_conn)
     trig_check = next(c for c in results if c.name == "notify_triggers")
     assert trig_check.ok is False
@@ -404,6 +380,7 @@ async def test_doctor_reports_missing_triggers(
 @pytest.mark.asyncio
 async def test_doctor_reports_no_migrations() -> None:
     """Cover the 'migrations table empty' branch."""
+
     # Build a stub conn that returns empty migrations and minimal triggers/workers/jobs.
     class _StubConn:
         async def fetch(self, sql: str, *_args: Any) -> list[dict[str, Any]]:
@@ -486,9 +463,7 @@ def test_contrib_flask_construct_app_directly(
     assert hasattr(app_obj, "roost")
 
 
-def test_contrib_django_enqueue_in_atomic(
-    fresh_dsn: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_contrib_django_enqueue_in_atomic(fresh_dsn: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """We don't want a real Django dep — fake `django.db.connections`."""
 
     class _Wrap:
@@ -586,9 +561,7 @@ def test_supervisor_n_must_be_positive(fresh_dsn: str) -> None:
     from roost._core.supervisor import run_workers
 
     with pytest.raises(ValueError):
-        run_workers(
-            fresh_dsn, n=0, queues=["default"], modules=[], worker_kwargs={}
-        )
+        run_workers(fresh_dsn, n=0, queues=["default"], modules=[], worker_kwargs={})
 
 
 def test_supervisor_spawns_and_drains(fresh_dsn: str) -> None:
@@ -719,9 +692,7 @@ async def test_run_inline_unknown_task_marks_discarded(
     await repo.enqueue_async(fresh_async_conn, task="not_registered", max_attempts=1)
     job_id = await run_inline(fresh_async_conn)
     assert job_id is not None
-    state = await fresh_async_conn.fetchval(
-        "SELECT state FROM roost.jobs WHERE id = $1", job_id
-    )
+    state = await fresh_async_conn.fetchval("SELECT state FROM roost.jobs WHERE id = $1", job_id)
     assert state == "discarded"
 
 
@@ -739,9 +710,7 @@ async def test_run_inline_failure_retries(
 
     await repo.enqueue_async(fresh_async_conn, task="flaky_inline", max_attempts=5)
     job_id = await run_inline(fresh_async_conn)
-    state = await fresh_async_conn.fetchval(
-        "SELECT state FROM roost.jobs WHERE id = $1", job_id
-    )
+    state = await fresh_async_conn.fetchval("SELECT state FROM roost.jobs WHERE id = $1", job_id)
     assert state == "retryable"
 
 
@@ -757,9 +726,7 @@ async def test_run_inline_snooze_path(fresh_async_conn: asyncpg.Connection) -> N
 
     await repo.enqueue_async(fresh_async_conn, task="snoozer")
     job_id = await run_inline(fresh_async_conn)
-    state = await fresh_async_conn.fetchval(
-        "SELECT state FROM roost.jobs WHERE id = $1", job_id
-    )
+    state = await fresh_async_conn.fetchval("SELECT state FROM roost.jobs WHERE id = $1", job_id)
     assert state == "available"  # snooze keeps it available, just rescheduled
 
 

@@ -628,9 +628,7 @@ async def fetch_available_async(
                 tasks_a.append(task)
                 rates.append(rate)
                 concs.append(conc)
-            picked = await conn.fetch(
-                _PICK_AVAILABLE_THROTTLED_PG, queues, limit, tasks_a, rates, concs
-            )
+            picked = await conn.fetch(_PICK_AVAILABLE_THROTTLED_PG, queues, limit, tasks_a, rates, concs)
 
         if not picked:
             return []
