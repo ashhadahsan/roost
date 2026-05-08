@@ -75,7 +75,7 @@ roost doctor                       # health check
 roost status                       # counts per state per queue
 ```
 
-Read the [docs](https://roost.readthedocs.io/) and the [recipes](https://roost.dev/recipes) for more.
+Read the [docs](https://roost.readthedocs.io/) and the [recipes](https://roost.ashhadahsan.com/recipes) for more.
 
 ## Feature matrix
 
@@ -140,7 +140,7 @@ Read the [docs](https://roost.readthedocs.io/) and the [recipes](https://roost.d
 
 ## Compared to other queues
 
-See [the comparison page](https://roost.dev/comparison) for a side-by-side feature matrix vs Celery, RQ, dramatiq, arq, procrastinate, and pgqueuer.
+See [the comparison page](https://roost.ashhadahsan.com/comparison) for a side-by-side feature matrix vs Celery, RQ, dramatiq, arq, procrastinate, and pgqueuer.
 
 Quick read: pick **Roost** if you already run Postgres and want transactional enqueue + a polished dashboard. Pick **Celery / RQ** if you don't run Postgres and have Redis already. Pick **procrastinate / pgqueuer** if you want the same Postgres-only foundation with a smaller feature surface.
 
