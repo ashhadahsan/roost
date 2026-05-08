@@ -15,7 +15,7 @@ jobs:
     name: lint + types
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
@@ -36,7 +36,7 @@ jobs:
     env:
       ROOST_TEST_PG_IMAGE: postgres:${{ matrix.postgres }}-alpine
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
