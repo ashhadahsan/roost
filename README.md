@@ -13,7 +13,7 @@
   <a href="https://pypi.org/project/pgroost/"><img src="https://img.shields.io/pypi/v/pgroost.svg" alt="PyPI"/></a>
   <a href="https://pypi.org/project/pgroost/"><img src="https://img.shields.io/pypi/pyversions/pgroost.svg" alt="Python versions"/></a>
   <a href="https://github.com/ashhadahsan/roost/actions/workflows/ci.yml"><img src="https://github.com/ashhadahsan/roost/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <a href="https://roost.readthedocs.io/"><img src="https://readthedocs.org/projects/roost/badge/?version=latest" alt="Docs"/></a>
+  <a href="https://pgroost.readthedocs.io/"><img src="https://readthedocs.org/projects/pgroost/badge/?version=latest" alt="Docs"/></a>
   <img src="https://img.shields.io/badge/coverage-86%25-brightgreen.svg" alt="Coverage 86%"/>
   <img src="https://img.shields.io/badge/tests-163%20passing-brightgreen.svg" alt="163 tests"/>
   <a href="LICENSE"><img src="https://img.shields.io/pypi/l/pgroost.svg" alt="MIT"/></a>
@@ -75,7 +75,7 @@ roost doctor                       # health check
 roost status                       # counts per state per queue
 ```
 
-Read the [docs](https://roost.readthedocs.io/) and the [recipes](https://roost.ashhadahsan.com/recipes) for more.
+Read the [docs](https://pgroost.readthedocs.io/) and the [recipes](https://roost.ashhadahsan.com/recipes) for more.
 
 ## Feature matrix
 

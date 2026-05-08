@@ -134,7 +134,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked
 - [ ] `docs/changelog.md`
 - [ ] Import repo on readthedocs.org, set default branch
 
-**Done when:** `roost.readthedocs.io` builds on push and on tag.
+**Done when:** `pgroost.readthedocs.io` builds on push and on tag.
 
 ---
 
@@ -189,7 +189,7 @@ Concept: small bird perched on a branch, geometric mark. Palette: Postgres-blue 
    - [ ] `examples/plain_python.py` enqueues + worker runs end-to-end
    - [ ] Forced failure → `retryable` → re-runs
 3. **CI matrix:** green on PG 13/14/15/16 × Python 3.10/3.11/3.12/3.13
-4. **Docs:** `roost.readthedocs.io` builds and renders the logo
+4. **Docs:** `pgroost.readthedocs.io` builds and renders the logo
 5. **PyPI:** `pip install pgroost` from a clean machine; `roost --version` → `0.1.0`
 6. **Tag:** `git tag v0.1.0 && git push --tags` → `release.yml` succeeds; PyPI + RTD updated
 

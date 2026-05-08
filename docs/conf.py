@@ -14,7 +14,7 @@ author = "Ashhad Ahsan"
 copyright = "2026, Ashhad Ahsan"
 
 try:
-    release = pkg_version("roost")
+    release = pkg_version("pgroost")
 except Exception:  # pragma: no cover
     release = "0.0.0"
 version = release

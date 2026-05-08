@@ -62,7 +62,7 @@ reload = [
 
 [project.urls]
 Homepage = "https://github.com/ashhadahsan/roost"
-Documentation = "https://roost.readthedocs.io"
+Documentation = "https://pgroost.readthedocs.io"
 Issues = "https://github.com/ashhadahsan/roost/issues"
 Changelog = "https://github.com/ashhadahsan/roost/blob/main/CHANGELOG.md"
 
