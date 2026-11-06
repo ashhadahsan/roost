@@ -1,45 +1,77 @@
 name: CI
-
 on:
-  push:
-    branches: [main]
+  push: {branches: [main]}
   pull_request:
-    branches: [main]
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
+permissions: {contents: read}
+concurrency: {group: "ci-${{ github.ref }}", cancel-in-progress: true}
 jobs:
   lint:
     name: lint + types
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-      - run: uv python install 3.12
-      - run: uv sync --all-extras
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: {persist-credentials: false}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with: {version: "0.13.6", python-version: "3.13"}
+      - run: uv sync --locked --all-extras
+      - run: uv run ruff check
+      - run: uv run ruff format --check
       - run: uv run mypy src
-
   test:
     name: py${{ matrix.python }} × pg${{ matrix.postgres }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13"]
-        postgres: ["13", "14", "15", "16"]
+        # every Python on the newest Postgres, every Postgres on one Python
+        include:
+          - {python: "3.10", postgres: "18"}
+          - {python: "3.11", postgres: "18"}
+          - {python: "3.12", postgres: "18"}
+          - {python: "3.13", postgres: "18"}
+          - {python: "3.14", postgres: "18"}
+          - {python: "3.13", postgres: "13"}
+          - {python: "3.13", postgres: "14"}
+          - {python: "3.13", postgres: "15"}
+          - {python: "3.13", postgres: "16"}
+          - {python: "3.13", postgres: "17"}
     env:
       ROOST_TEST_PG_IMAGE: postgres:${{ matrix.postgres }}-alpine
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: {persist-credentials: false}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          enable-cache: true
-      - run: uv python install ${{ matrix.python }}
-      - run: uv sync --all-extras --python ${{ matrix.python }}
-      - run: uv run --python ${{ matrix.python }} pytest -n auto --maxfail=3
+          version: "0.13.6"
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked --all-extras
+      - run: uv run pytest -n auto --maxfail=3 --cov=roost --cov-report=term --cov-fail-under=85
+  package:
+    name: build + PyPI metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: {persist-credentials: false}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with: {version: "0.13.6", python-version: "3.13"}
+      - run: uv build
+      - run: uvx twine@6.2.0 check --strict dist/*
+      - name: the wheel installs and reports its own version
+        run: test "$(uv run --isolated --no-project --with dist/*.whl roost version)" = "$(uv version --short)"
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: {persist-credentials: false}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with: {version: "0.13.6", python-version: "3.12"}
+      - run: uv run --locked --extra docs sphinx-build -b html docs docs/_build/html
+  workflows:
+    name: workflow security lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: {persist-credentials: false}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with: {version: "0.13.6"}
+      - run: uvx zizmor@1.31.1 --offline .github/workflows

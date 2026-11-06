@@ -1,10 +1,11 @@
 [project]
 name = "pgroost"
-version = "0.1.1"
-description = "Postgres-backed background job queue for Python — Oban for Pythonistas. Install: pip install pgroost; import: `import roost`."
+version = "0.1.2"
+description = "Postgres-backed background job queue for Python: transactional enqueue, retries, cron and a live dashboard, with no Redis or RabbitMQ."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Ashhad Ahsan", email = "ashhadahsan@gmail.com" },
 ]
@@ -21,7 +22,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: AsyncIO",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
@@ -29,6 +29,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Database",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
@@ -63,7 +64,9 @@ reload = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ashhadahsan/roost"
+Homepage = "https://roost.ashhadahsan.com"
+Source = "https://github.com/ashhadahsan/roost"
+Dashboard = "https://github.com/ashhadahsan/roost-web"
 Documentation = "https://pgroost.readthedocs.io"
 Issues = "https://github.com/ashhadahsan/roost/issues"
 Changelog = "https://github.com/ashhadahsan/roost/blob/main/CHANGELOG.md"
@@ -72,7 +75,7 @@ Changelog = "https://github.com/ashhadahsan/roost/blob/main/CHANGELOG.md"
 roost = "roost.cli:app"
 
 [build-system]
-requires = ["uv_build>=0.9.0,<0.10.0"]
+requires = ["uv_build>=0.13.6,<0.14"]
 build-backend = "uv_build"
 
 # PyPI distribution is "pgroost" but the import path stays `roost`.
@@ -123,6 +126,7 @@ dev = [
     "pre-commit>=4.6.0",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.15.12",
     "testcontainers[postgres]>=4.14.2",

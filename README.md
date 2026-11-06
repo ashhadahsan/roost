@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD033 MD041 -->
 <p align="center">
-  <img src="docs/_static/logo.svg" alt="Roost" width="180"/>
+  <img src="https://raw.githubusercontent.com/ashhadahsan/roost/main/docs/_static/logo.svg" alt="Roost" width="180"/>
 </p>
 
 <h1 align="center">Roost</h1>
@@ -16,7 +16,7 @@
   <a href="https://pgroost.readthedocs.io/"><img src="https://readthedocs.org/projects/pgroost/badge/?version=latest" alt="Docs"/></a>
   <img src="https://img.shields.io/badge/coverage-86%25-brightgreen.svg" alt="Coverage 86%"/>
   <img src="https://img.shields.io/badge/tests-163%20passing-brightgreen.svg" alt="163 tests"/>
-  <a href="LICENSE"><img src="https://img.shields.io/pypi/l/pgroost.svg" alt="MIT"/></a>
+  <a href="https://github.com/ashhadahsan/roost/blob/main/LICENSE"><img src="https://img.shields.io/pypi/l/pgroost.svg" alt="MIT"/></a>
 </p>
 
 > 🚧 **Alpha** — under active development. APIs may change before `1.0`. Pin exactly.
@@ -77,6 +77,24 @@ roost status                       # counts per state per queue
 
 Read the [docs](https://pgroost.readthedocs.io/) and the [recipes](https://roost.ashhadahsan.com/recipes) for more.
 
+## Dashboard
+
+[**roost-web**](https://github.com/ashhadahsan/roost-web) is the dashboard: its own package, mounted inside the app you already run. Live counters per queue, job search by state, queue, task, tag or args, one-click retry and cancel, queue pause and resume, workers and cron.
+
+```bash
+pip install roost-web
+```
+
+```python
+from roost_web import dashboard
+
+app.mount("/jobs", dashboard(dsn="postgresql://..."))  # FastAPI, Starlette or any ASGI app
+```
+
+<p align="center">
+  <a href="https://github.com/ashhadahsan/roost-web"><img src="https://raw.githubusercontent.com/ashhadahsan/roost-web/main/docs/screenshots/overview.png" alt="roost-web overview: live counters per queue and state, completed-per-minute chart, running workers" width="860"/></a>
+</p>
+
 ## Feature matrix
 
 | Feature                              | Status                                                  |
@@ -108,8 +126,8 @@ Read the [docs](https://pgroost.readthedocs.io/) and the [recipes](https://roost
 
 ## Compatibility
 
-- **Python:** 3.10, 3.11, 3.12, 3.13.
-- **PostgreSQL:** 13, 14, 15, 16. Tested every commit on the full matrix.
+- **Python:** 3.10, 3.11, 3.12, 3.13, 3.14.
+- **PostgreSQL:** 13, 14, 15, 16, 17, 18. Tested on every commit.
 - **Drivers:** `asyncpg` (async), `psycopg[binary]` (sync).
 - **Hosts:** any ASGI app — FastAPI, Starlette, Litestar, Quart. Django and Flask via the contrib helpers.
 
@@ -177,8 +195,8 @@ Each has its own README; start there.
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md). Bugs + feature requests via GitHub issues. Security disclosures: see [SECURITY.md](SECURITY.md). All participants are expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+Read [CONTRIBUTING.md](https://github.com/ashhadahsan/roost/blob/main/CONTRIBUTING.md). Bugs + feature requests via GitHub issues. Security disclosures: see [SECURITY.md](https://github.com/ashhadahsan/roost/blob/main/SECURITY.md). All participants are expected to follow the [Code of Conduct](https://github.com/ashhadahsan/roost/blob/main/CODE_OF_CONDUCT.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/ashhadahsan/roost/blob/main/LICENSE).
