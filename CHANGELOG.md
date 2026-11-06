@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-06
+
+Patch release: packaging and release fixes. No change to how jobs run.
+
+### Fixed
+
+- **`roost version` and `roost.__version__`** reported `0.1.0.dev0` on every release. They now read the installed `pgroost` version.
+- **Docker example** installed `roost`, which is not this package on PyPI. It now installs `pgroost` (and `roost-web` for the dashboard).
+- **PyPI page**: the README logo and the LICENSE, CONTRIBUTING, SECURITY and Code of Conduct links were relative, so they broke on PyPI. They are absolute now.
+- **License metadata** uses the SPDX expression (`license = "MIT"` with `license-files`) instead of the deprecated table and classifier.
+
+### Changed
+
+- README has a Dashboard section with a screenshot of [roost-web](https://github.com/ashhadahsan/roost-web) and how to mount it. PyPI project links now include the site, the source and the dashboard.
+- CI: pinned actions, locked installs, every Python (3.10 to 3.14) on Postgres 18 and every Postgres (13 to 18) on Python 3.13, 85% coverage gate, docs build, package metadata check and a workflow security lint. Releases build once, check the tag matches the version, and publish through the `pypi` environment; a manual run publishes to TestPyPI.
+- Python 3.14 and Postgres 17 and 18 are now tested and listed as supported.
+
 ## [0.1.1] - 2026-05-08
 
 Patch release. No runtime code changes — docs + site cleanup only.
@@ -86,6 +103,7 @@ First public release.
 - Sphinx + Furo documentation site with quickstart, concepts, and recipes.
 - Community files: SECURITY.md, CODE_OF_CONDUCT.md, GitHub issue + PR templates, Dependabot config.
 
-[Unreleased]: https://github.com/ashhadahsan/roost/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/ashhadahsan/roost/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/ashhadahsan/roost/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ashhadahsan/roost/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ashhadahsan/roost/releases/tag/v0.1.0

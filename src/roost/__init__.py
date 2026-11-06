@@ -10,6 +10,8 @@ and a single SQL surface defined in :mod:`roost._core.repo`.
 
 from __future__ import annotations
 
+from importlib.metadata import version
+
 from roost._core.cron import CronEntry
 from roost._core.job import Job
 from roost._core.repo import JobInsert
@@ -35,7 +37,7 @@ from roost.hooks import Hooks
 from roost.sync_api import Roost
 from roost.worker import Worker
 
-__version__ = "0.1.0.dev0"
+__version__ = version("pgroost")  # the distribution is pgroost; the import name is roost
 
 __all__ = [
     "AsyncRoost",
